@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from env_torch import ActionIsIllegal, HanabiEnvironment, Transition
+from env_dqn import ActionIsIllegal, HanabiEnvironment, Transition
 
 
 class EpisodicStats(object):
