@@ -1,0 +1,20 @@
+{
+  "env_preset": "full",
+  "env_players": 2,
+
+  "replay_capacity": 50000,
+  "replay_init_size": 5000,
+
+  "batch_size": 16,
+  "hidden_size": 512,
+  "num_layers": 2,
+  "learning_rate": 1e-5,
+
+  "max_steps": 10000000,
+  "max_episode_steps": 500,
+  "policy_sync_every": 1000,
+  "discount": 0.99,
+
+  "eval_every": 10000,
+  "eval_episodes": 1000
+}

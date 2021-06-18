@@ -1,3 +1,5 @@
+import argparse
+import json
 import random
 from collections import deque
 from timeit import default_timer
@@ -6,40 +8,47 @@ import numpy as np
 import torch
 from torch import nn
 
-from env_dqn import ActionIsIllegal, HanabiEnvironment, Transition
+from .env import HanabiEnvironment, Transition
 
 
 class EpisodicStats(object):
     def __init__(self, maxlen=100) -> None:
         super().__init__()
 
-        self.steps = deque(maxlen=maxlen)
-        self.score = deque(maxlen=maxlen)
-        self.fireworks = deque(maxlen=maxlen)
-        self.q_max = deque(maxlen=maxlen)
+        self.steps = deque(maxlen=maxlen)  # item: episode length
+        self.reward = deque(maxlen=maxlen)  # item: episode cumulative reward
+        self.avg_q_max = deque(maxlen=maxlen)  # item: avg q_max per episode
+        self.actions = []
 
-    def push(self, steps=None, score=None, fireworks=None, q_max=None):
-        if steps is not None:
-            self.steps.append(steps)
-        if score is not None:
-            self.score.append(score)
-        if fireworks is not None:
-            self.fireworks.append(fireworks)
-        if q_max is not None:
-            self.q_max.append(q_max)
+    def push(self, steps, reward, avg_q_max, actions):
+        self.steps.append(steps)
+        self.reward.append(reward)
+        self.avg_q_max.append(avg_q_max)
+        self.actions.extend(actions)
 
     def __str__(self) -> str:
-        steps = np.mean(self.steps) if len(self.steps) != 0 else -1
-        score = np.mean(self.score) if len(self.score) != 0 else -1
-        fireworks = np.mean(self.fireworks) if len(self.fireworks) != 0 else -1
-        q_max = np.mean(self.q_max) if len(self.q_max) != 0 else -1
+        steps = np.mean(self.steps)
+        reward = np.mean(self.reward)
+        avg_q_max = np.mean(self.avg_q_max)
+
+        def _tabulate(values, counts):
+            line_1, line_2 = "\t", "\t"
+
+            for v, c in zip(map(str, values), map(str, counts)):
+                size = max(len(v), len(c)) + 2
+                line_1 += v.ljust(size, " ")
+                line_2 += c.ljust(size, " ")
+
+            return line_1 + "\n" + line_2
+
+        action_hist = _tabulate(*np.unique(self.actions, return_counts=True))
 
         return (
             f"Average over {len(self.steps)} episodes: "
             f"steps={steps:.2f}, "
-            f"score={score:.2f}, "
-            f"fireworks={fireworks:.2f}, "
-            f"q_max={q_max:.2f}"
+            f"reward={reward:.2f}, "
+            f"avg_q_max={avg_q_max:.2f}, "
+            f"action_histogram=\n{action_hist}"
         )
 
 
@@ -95,12 +104,12 @@ class ReplayMemory(object):
 
     def push(self, transition: Transition):
         transition = Transition(
-            transition.obs_t0.to(device=self.device, copy=True),
-            transition.action.to(device=self.device, copy=True),
-            transition.reward.to(device=self.device, copy=True),
-            transition.obs_t1.to(device=self.device, copy=True),
-            transition.illegal_mask_t1.to(device=self.device, copy=True),
-            transition.is_terminal,
+            transition.obs_t0.to(device=self.device),
+            transition.action.to(device=self.device),
+            transition.reward.to(device=self.device),
+            transition.obs_t1.to(device=self.device),
+            transition.illegal_mask_t1.to(device=self.device),
+            torch.tensor(transition.is_terminal, device=self.device).view(1),
         )
 
         if len(self.memory) < self.capacity:
@@ -126,13 +135,14 @@ def evaluate(env, policy_net, episodes=100, max_episode_steps=300):
     policy_net.eval()
 
     stats = EpisodicStats(maxlen=episodes)
-    moves = []
 
     for _ in range(episodes):
         env.reset()
 
         steps = 0
-        q_max_list = []
+        total_reward = 0.0
+        total_q_max = 0.0
+        actions = []
 
         is_terminal = False
 
@@ -142,27 +152,17 @@ def evaluate(env, policy_net, episodes=100, max_episode_steps=300):
             q = policy_net(env.observations[player], env.illegal_mask)
             q_max, action = q.max(dim=0)
 
-            q_max_list.append(q_max)
+            reward, is_terminal = env.quick_step(action)
 
-            moves.append(int(action.item()))
-
-            is_terminal = env.quick_step(action)
             steps += 1
+            total_reward += reward
+            total_q_max += q_max.item()
+            actions.append(env.game.get_move(action.item()).type().name)
 
             if is_terminal:
                 break
 
-        stats.push(
-            steps,
-            env.score,
-            env.fireworks,
-            np.mean(q_max_list),
-        )
-
-    print(
-        "Action histogram:",
-        [(m, c) for m, c in zip(*np.unique(moves, return_counts=True))],
-    )
+        stats.push(steps, total_reward, total_q_max / steps, actions)
 
     policy_net.train(is_training)
 
@@ -171,8 +171,9 @@ def evaluate(env, policy_net, episodes=100, max_episode_steps=300):
 
 def main(
     # env config
-    env_preset="full",
+    env_preset="small",
     env_players=2,
+    reward_scheme=None,
     # replay config
     replay_capacity=10_000,
     replay_init_size=1_000,
@@ -182,21 +183,18 @@ def main(
     num_layers=2,
     learning_rate=1e-4,
     # q-learning config
-    max_steps=100_000,
+    max_steps=10_000_000,
     max_episode_steps=100,
-    policy_sync_every=5_000,
+    policy_sync_every=1_000,
     discount=0.99,
-    eval_every=5_000,
-    eval_episodes=100,
+    eval_every=10_000,
+    eval_episodes=1000,
     # other config
     seed=-1,
+    device="cpu",
 ):
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
 
-    env = HanabiEnvironment(env_preset, env_players)
+    env = HanabiEnvironment(env_preset, env_players, device=device)
 
     replay_memory = ReplayMemory(capacity=replay_capacity, device=device)
 
@@ -231,13 +229,13 @@ def main(
         if env_reset:
             env.reset()
 
-        action = random.randint(0, env.max_moves - 1)
-        try:
-            transition = env.step(action)
-        except ActionIsIllegal:
-            continue
+        action = random.choice(
+            [env.game.get_move_uid(m) for m in env.state.legal_moves()]
+        )
 
+        transition = env.step(action)
         replay_memory.push(transition)
+
         env_reset = transition.is_terminal
 
     # start training
@@ -272,13 +270,11 @@ def main(
 
         batch = replay_memory.sample(batch_size)
         batch_obs_t0 = torch.stack([t.obs_t0 for t in batch])
-        batch_action = torch.stack([t.action for t in batch]).view(-1, 1)
-        batch_reward = torch.stack([t.reward for t in batch]).view(-1, 1)
+        batch_action = torch.stack([t.action for t in batch])
+        batch_reward = torch.stack([t.reward for t in batch])
         batch_obs_t1 = torch.stack([t.obs_t1 for t in batch])
         batch_illegal_mask_t1 = torch.stack([t.illegal_mask_t1 for t in batch])
-        batch_is_terminal = (
-            torch.tensor([t.is_terminal for t in batch]).to(device).view(-1, 1)
-        )
+        batch_is_terminal = torch.stack([t.is_terminal for t in batch])
 
         # Double DQN
         q_policy = policy_net(batch_obs_t0)
@@ -286,11 +282,8 @@ def main(
 
         # target = R + discount * Q'(obs_t1, argmax_a(Q(obs_t1)))
         with torch.no_grad():
-            action_t1 = (
-                policy_net(batch_obs_t1, batch_illegal_mask_t1)
-                .argmax(dim=1)
-                .view(-1, 1)
-            )
+            action_t1 = policy_net(batch_obs_t1, batch_illegal_mask_t1)
+            action_t1 = action_t1.argmax(dim=1).view(-1, 1)
 
             q_target = target_net(batch_obs_t1)
             q_target = torch.gather(q_target, dim=1, index=action_t1)
@@ -300,13 +293,14 @@ def main(
 
         loss = criterion(q_policy, q_target)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(policy_net.parameters(), 1.0)
 
         optimizer.step()
         scheduler.step()
 
         avg_loss = avg_loss * 0.9 + loss.item() * 0.1
 
-        if (i_step + 1) % (max_steps // 100) == 0:
+        if (i_step + 1) % (eval_every // 10) == 0:
             print(f"Step {(i_step + 1)}: avg_loss={avg_loss:.6f}")
 
         if (i_step + 1) % policy_sync_every == 0:
@@ -316,7 +310,7 @@ def main(
         if (i_step + 1) % eval_every == 0:
             print(evaluate(env, policy_net, eval_episodes, max_episode_steps))
 
-        if (i_step + 1) % (max_steps // 10) == 0:
+        if (i_step + 1) % (max_steps // 100) == 0:
             percentage = (i_step + 1) * 100 // max_steps
             torch.save(
                 policy_net.state_dict(), f"checkpoints/hanabi_dqn-{percentage}%.pt"
@@ -332,4 +326,20 @@ def main(
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-c", "--config", type=str, required=True)
+    parser.add_argument("-d", "--device", type=int, default=0)
+
+    args = parser.parse_args()
+
+    if torch.cuda.is_available():
+        device = torch.device(f"cuda:{args.device}")
+    else:
+        device = torch.device("cpu")
+
+    with open(args.config, "r") as fi:
+        config = json.load(fi)
+
+    config["device"] = device
+
+    main(**config)
