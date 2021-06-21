@@ -2,100 +2,149 @@ from typing import Iterator
 
 import numpy as np
 import torch
+from torch import nn
+from torch.nn import functional as F
 from torch.utils.data import DataLoader
-from utils import action_histogram
 
-from .data import FrameBatch
-from .env import Frame, FrameType, PPOEnvironment
-from .module import MLPAgent
+from ppo.data import FrameBatch
+from ppo.env import Frame, FrameType, PPOEnvironment
+from ppo.module import MLPPolicy
+from ppo.utils import action_histogram
 
 
 @torch.no_grad()
-def collect(env: PPOEnvironment, agent, collection_size, device):
+def collect(
+    env: PPOEnvironment,
+    policy_fn: nn.Module,
+    value_fn: nn.Module,
+    gae_gamma: float,
+    gae_lambda: float,
+    collection_size: int,
+    device: torch.device,
+):
+    """Collection phase in PG iteration
+
+    It does:
+        1. Run the env for `collection-size` frames, reset if necessary
+        2. Compute advantages over each episode
+        3. Return a list of frames
+    """
+
+    # exponentials of (gamma * lambda), ie [1.0, (gl)^1, (gl)^2, ...]
+    glexp = torch.tensor(gae_gamma * gae_lambda, device=device)
+    glexp = glexp.pow(torch.arange(100))  # max length of hanabi is about 88
+
+    gammaexp = torch.tensor(gae_gamma, device=device).pow(torch.arange(100))
+
+    def _gae(frames: list[Frame]):
+        """Nested function for Generalised Advantage Estimation"""
+        episode_length = len(frame)
+
+        rewards = torch.stack([f.reward for f in frames])
+        values = torch.stack([f.value for f in frames])
+        values_t1 = torch.stack([f.value_t1 for f in frames])
+
+        deltas = rewards + gae_gamma * values_t1 - values
+
+        empret = torch.zeros_like(rewards)  # empirical returns
+        advantages = torch.zeros_like(rewards)
+        for t in range(episode_length):
+            empret[t] = torch.sum(gammaexp[: episode_length - t] * rewards[t:])
+            advantages[t] = torch.sum(glexp[: episode_length - t] * deltas[t:])
+
+        for f, r, adv in zip(frames, empret, advantages):
+            f.empret = r
+            f.advantage = adv
+
+        return frames
+
     data: list[Frame] = []
-    episodes = 0
-    total_reward = 0.0
 
     while len(data) < collection_size:
         env.reset()
-        episode_frame_types = []
-        episode_observations = []
-        episode_action_logps = []
-        episode_actions = []
-        episode_rewards = []
+        is_terminal = False
+        episode_frames = []
 
-        frame_type = env.frame_type
-
-        while frame_type is not FrameType.END:
+        while not is_terminal:
             frame_type = env.frame_type
             obs = torch.tensor(env.observation, dtype=torch.float, device=device)
-            legal_moves = env.legal_moves
 
-            logp = agent(obs)
+            # policy_fn(observation) -> action
+            logp = policy_fn(obs)
             prob = torch.exp(logp)
 
             illegal_mask = torch.ones_like(prob, dtype=torch.bool)
-            illegal_mask[legal_moves] = False
+            illegal_mask[env.legal_moves] = False
             prob[illegal_mask] = 0.0
 
             action = torch.multinomial(prob, 1)
 
-            reward = env.step(action.item())
+            # env update
+            obs_t1, reward, is_terminal = env.step(action.item())
+            obs_t1 = obs.new_tensor(obs_t1)
+            reward = obs.new_tensor(reward)
 
-            episode_frame_types.append(frame_type)
-            episode_observations.append(obs)
-            episode_action_logps.append(logp)
-            episode_actions.append(action)
-            episode_rewards.append(reward)
+            # value_fn(observation) -> value_estimate
+            value = value_fn(obs)
+            value_t1 = value_fn(obs_t1) if not is_terminal else value.new_tensor(0.0)
 
-        # simple advantage = sum(all future rewards)
-        episode_rewards = torch.tensor(episode_rewards, device=device).view(-1, 1)
-        advantages = episode_rewards.sum().expand_as(episode_rewards)
-        # advantages = episode_rewards.flipud().cumsum().flipud().view(-1, 1)
-
-        frames = [
-            Frame(*args)
-            for args in zip(
-                episode_frame_types,
-                episode_observations,
-                episode_action_logps,
-                episode_actions,
-                episode_rewards,
-                advantages,
+            frame = Frame(
+                frame_type=frame_type,
+                observation=obs,
+                observation_t1=obs_t1,
+                action_logp=logp,
+                action=action,
+                value=value,
+                value_t1=value_t1,
+                reward=reward,
+                # advantage defaults to None and will be computed in GAE
             )
-        ]
 
-        data.extend(frames)
-        episodes += 1
-        total_reward += episode_rewards.sum()
+            episode_frames.append(frame)
 
-    baseline = total_reward / episodes
-    print(">>> baseline:", baseline)
-    for f in data:
-        f.advantage.sub_(baseline)
+        episode_frames = _gae(episode_frames)
+        data.extend(episode_frames)
 
-    return data
+    return data[:collection_size]
 
 
-def train(data: Iterator[FrameBatch], agent, optimizer, epsilon, epochs):
+def train(
+    data: Iterator[FrameBatch],
+    policy_fn,
+    policy_fn_optimizer,
+    value_fn,
+    value_fn_optimizer,
+    ppo_epsilon,
+    epochs,
+):
     for i_epoch in range(epochs):
         for batch in data:
-            optimizer.zero_grad()
+            policy_fn_optimizer.zero_grad()
 
-            logps = agent(batch.observations)
+            # update policy
+            logps = policy_fn(batch.observations)
             logps = torch.gather(logps, dim=1, index=batch.actions)
 
             ratio = torch.exp(logps - batch.action_logps)
             loss_1 = ratio * batch.advantages
-            loss_2 = torch.clip(loss_1, 1 - epsilon, 1 + epsilon)
+            loss_2 = torch.clip(loss_1, 1 - ppo_epsilon, 1 + ppo_epsilon)
             loss = torch.mean(torch.minimum(loss_1, loss_2))
 
             loss.backward()
-            optimizer.step()
+            policy_fn_optimizer.step()
+
+            # update value function
+            value_fn_optimizer.zero_grad()
+
+            values = value_fn(batch.observations)
+            loss_vf = F.smooth_l1_loss(values, batch.empret)
+
+            loss_vf.backward()
+            value_fn_optimizer.step()
 
 
 @torch.no_grad()
-def evaluate(env, agent, episodes=100, device="cpu"):
+def evaluate(env, policy_fn, episodes=100, device="cpu"):
     all_lengths = []
     all_rewards = []
     all_actions = []
@@ -111,7 +160,7 @@ def evaluate(env, agent, episodes=100, device="cpu"):
             obs = torch.tensor(env.observation, dtype=torch.float, device=device)
             legal_moves = env.legal_moves
 
-            logp = agent(obs)
+            logp = policy_fn(obs)
             prob = torch.exp(logp)
 
             illegal_mask = torch.ones_like(prob, dtype=torch.bool)
@@ -149,11 +198,14 @@ def main(
     # collection config
     iterations=1000,
     collection_size=1000,
+    gae_gamma=0.99,
+    gae_lambda=0.99,
     # neural network config
     hidden_size=512,
     num_layers=2,
     # training config
     batch_size=1000,
+    dataloader_workers=0,
     epochs=1,
     learning_rate=1e-4,
     ppo_epsilon=0.2,
@@ -166,7 +218,7 @@ def main(
 ):
     env = PPOEnvironment(env_players, seed)
 
-    agent = MLPAgent(env.obs_size, env.num_actions, hidden_size, num_layers)
+    agent = MLPPolicy(env.obs_size, env.num_actions, hidden_size, num_layers)
     for p in agent.layers[-1].parameters():
         torch.nn.init.zeros_(p)
 
@@ -184,6 +236,7 @@ def main(
             data,
             batch_size,
             shuffle=True,
+            num_workers=dataloader_workers,
             collate_fn=FrameBatch,
             pin_memory=True,
             drop_last=True,

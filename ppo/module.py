@@ -3,16 +3,16 @@ from torch.nn import Module, ReLU, Sequential, Linear, Identity
 from torch.nn import functional as F
 
 
-class MLPAgent(Module):
-    def __init__(self, obs_size, num_actions, hidden_size, num_layers):
+class MLPPolicy(Module):
+    def __init__(self, input_size, output_size, hidden_size, num_layers):
         super().__init__()
 
         self.layers = Sequential(
             *[
                 Sequential(
                     Linear(
-                        obs_size if i == 0 else hidden_size,
-                        hidden_size if i < num_layers else num_actions,
+                        input_size if i == 0 else hidden_size,
+                        hidden_size if i < num_layers else output_size,
                     ),
                     ReLU() if i < num_layers else Identity(),
                 )
@@ -27,3 +27,25 @@ class MLPAgent(Module):
             return F.log_softmax(logits, dim=-1)
         else:
             return F.softmax(logits, dim=-1)
+
+
+class MLPValueFunction(Module):
+    def __init__(self, input_size, hidden_size, num_layers):
+        super().__init__()
+
+        self.layers = Sequential(
+            *[
+                Sequential(
+                    Linear(
+                        input_size if i == 0 else hidden_size,
+                        hidden_size if i < num_layers else 1,
+                    ),
+                    ReLU() if i < num_layers else Identity(),
+                )
+                for i in range(num_layers + 1)
+            ]
+        )
+
+    def forward(self, obs):
+        value = self.layers(obs)
+        return value

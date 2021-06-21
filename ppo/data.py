@@ -1,6 +1,6 @@
 import torch
 
-from .env import Frame
+from ppo.env import Frame
 
 
 class FrameBatch:
@@ -9,12 +9,14 @@ class FrameBatch:
         self.observations = torch.stack([f.observation for f in frames])
         self.action_logps = torch.stack([f.action_logp for f in frames])
         self.actions = torch.stack([f.action for f in frames])
+        self.emprets = torch.stack([f.empret for f in frames])
         self.advantages = torch.stack([f.advantage for f in frames])
 
     def pin_memory(self):
         self.observations = self.observations.pin_memory()
         self.action_logps = self.action_logps.pin_memory()
         self.actions = self.actions.pin_memory()
+        self.emprets = self.emprets.pin_memory()
         self.advantages = self.advantages.pin_memory()
 
         return self
