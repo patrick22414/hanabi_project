@@ -1,6 +1,22 @@
+from dataclasses import dataclass
+from enum import Enum
+
 import torch
 
-from ppo.env import Frame
+FrameType = Enum("FrameType", "START MID END")
+
+
+@dataclass
+class Frame:
+    frame_type: FrameType
+    observation: torch.Tensor  # 1-d vector
+    action_logp: torch.Tensor  # 1-d scalar
+    action: torch.LongTensor  # 1-d int64 scalar
+    value: torch.Tensor  # scalar
+    value_t1: torch.Tensor  # scalar
+    reward: torch.Tensor  # scalar
+    empret: torch.Tensor = None  # scalar, empirical return
+    advantage: torch.Tensor = None  # scalar
 
 
 class FrameBatch:

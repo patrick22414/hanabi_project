@@ -1,29 +1,8 @@
-from enum import Enum
-from dataclasses import dataclass
-
-import torch
 from hanabi_learning_environment.pyhanabi import *
 
 
 class ActionIsIllegal(RuntimeError):
     pass
-
-
-FrameType = Enum("FrameType", "START MID END")
-
-
-@dataclass
-class Frame:
-    frame_type: FrameType
-    observation: torch.Tensor  # 1-d vector
-    observation_t1: torch.Tensor  # 1-d vector
-    action_logp: torch.Tensor  # 1-d vector
-    action: torch.Tensor  # 1-d scalar
-    value: torch.Tensor  # scalar
-    value_t1: torch.Tensor  # scalar
-    reward: torch.Tensor  # scalar
-    empret: torch.Tensor  # scalar, empirical return
-    advantage: torch.Tensor = None  # scalar
 
 
 class PPOEnvironment(object):
@@ -45,10 +24,8 @@ class PPOEnvironment(object):
         while self._state.cur_player() == CHANCE_PLAYER_ID:
             self._state.deal_random_card()
 
-        self.frame_type = FrameType.START
         self.observation = self._make_observation()
         self.legal_moves = self._make_legal_moves()
-
         self.score = self._state.score()
 
     def step(self, action: int):
@@ -69,13 +46,10 @@ class PPOEnvironment(object):
             reward = 0.0
 
         obs_t1 = self._make_observation(player)  # obs_t1 is from the old player
+        is_terminal = self._state.is_terminal()
 
         # prepare for next step
-        is_terminal = self._state.is_terminal()
-        if is_terminal:
-            self.frame_type = FrameType.END
-        else:
-            self.frame_type = FrameType.MID
+        if not is_terminal:
             self.observation = self._make_observation()
             self.legal_moves = self._make_legal_moves()
             self.score = new_score

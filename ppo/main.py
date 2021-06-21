@@ -6,9 +6,9 @@ from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
-from ppo.data import FrameBatch
-from ppo.env import Frame, FrameType, PPOEnvironment
-from ppo.module import MLPPolicy
+from ppo.data import Frame, FrameBatch, FrameType
+from ppo.env import PPOEnvironment
+from ppo.module import MLPPolicy, MLPValueFunction
 from ppo.utils import action_histogram
 
 
@@ -38,7 +38,7 @@ def collect(
 
     def _gae(frames: list[Frame]):
         """Nested function for Generalised Advantage Estimation"""
-        episode_length = len(frame)
+        episode_length = len(frames)
 
         rewards = torch.stack([f.reward for f in frames])
         values = torch.stack([f.value for f in frames])
@@ -62,11 +62,11 @@ def collect(
 
     while len(data) < collection_size:
         env.reset()
-        is_terminal = False
         episode_frames = []
+        frame_type = FrameType.START
+        is_terminal = False
 
         while not is_terminal:
-            frame_type = env.frame_type
             obs = torch.tensor(env.observation, dtype=torch.float, device=device)
 
             # policy_fn(observation) -> action
@@ -86,19 +86,24 @@ def collect(
 
             # value_fn(observation) -> value_estimate
             value = value_fn(obs)
-            value_t1 = value_fn(obs_t1) if not is_terminal else value.new_tensor(0.0)
+            value_t1 = value_fn(obs_t1) if not is_terminal else value.new_tensor(0)
+
+            if is_terminal:
+                frame_type = FrameType.END
 
             frame = Frame(
                 frame_type=frame_type,
                 observation=obs,
-                observation_t1=obs_t1,
-                action_logp=logp,
+                action_logp=logp[action],
                 action=action,
                 value=value,
                 value_t1=value_t1,
                 reward=reward,
-                # advantage defaults to None and will be computed in GAE
+                # empret and advantage default to None and will be computed in GAE
             )
+
+            if frame_type is FrameType.START:
+                frame_type = FrameType.MID
 
             episode_frames.append(frame)
 
@@ -110,12 +115,12 @@ def collect(
 
 def train(
     data: Iterator[FrameBatch],
-    policy_fn,
-    policy_fn_optimizer,
-    value_fn,
-    value_fn_optimizer,
-    ppo_epsilon,
-    epochs,
+    policy_fn: nn.Module,
+    policy_fn_optimizer: torch.optim.Optimizer,
+    value_fn: nn.Module,
+    value_fn_optimizer: torch.optim.Optimizer,
+    ppo_epsilon: float,
+    epochs: int,
 ):
     for i_epoch in range(epochs):
         for batch in data:
@@ -125,19 +130,19 @@ def train(
             logps = policy_fn(batch.observations)
             logps = torch.gather(logps, dim=1, index=batch.actions)
 
-            ratio = torch.exp(logps - batch.action_logps)
+            ratio = torch.exp(logps - batch.action_logps).squeeze()
             loss_1 = ratio * batch.advantages
             loss_2 = torch.clip(loss_1, 1 - ppo_epsilon, 1 + ppo_epsilon)
-            loss = torch.mean(torch.minimum(loss_1, loss_2))
+            loss_ppo = torch.mean(torch.minimum(loss_1, loss_2))
 
-            loss.backward()
+            loss_ppo.backward()
             policy_fn_optimizer.step()
 
             # update value function
             value_fn_optimizer.zero_grad()
 
             values = value_fn(batch.observations)
-            loss_vf = F.smooth_l1_loss(values, batch.empret)
+            loss_vf = F.smooth_l1_loss(values, batch.emprets)
 
             loss_vf.backward()
             value_fn_optimizer.step()
@@ -153,23 +158,23 @@ def evaluate(env, policy_fn, episodes=100, device="cpu"):
     for _ in range(episodes):
         env.reset()
 
+        is_terminal = False
         episode_length = 0
         episode_reward = 0.0
 
-        while env.frame_type is not FrameType.END:
+        while not is_terminal:
             obs = torch.tensor(env.observation, dtype=torch.float, device=device)
-            legal_moves = env.legal_moves
 
             logp = policy_fn(obs)
             prob = torch.exp(logp)
 
             illegal_mask = torch.ones_like(prob, dtype=torch.bool)
-            illegal_mask[legal_moves] = False
+            illegal_mask[env.legal_moves] = False
             prob[illegal_mask] = 0.0
 
             action = torch.multinomial(prob, 1).item()
 
-            reward = env.step(action)
+            _, reward, is_terminal = env.step(action)  # discarding obs_t1
 
             episode_length += 1
             episode_reward += reward
@@ -207,7 +212,7 @@ def main(
     batch_size=1000,
     dataloader_workers=0,
     epochs=1,
-    learning_rate=1e-4,
+    learning_rate=1e-3,
     ppo_epsilon=0.2,
     # eval_config
     eval_every=1,  # every n iterations
@@ -218,19 +223,26 @@ def main(
 ):
     env = PPOEnvironment(env_players, seed)
 
-    agent = MLPPolicy(env.obs_size, env.num_actions, hidden_size, num_layers)
-    for p in agent.layers[-1].parameters():
-        torch.nn.init.zeros_(p)
-
-    optimizer = torch.optim.Adam(
-        agent.parameters(), lr=learning_rate, weight_decay=1e-6
+    policy_fn = MLPPolicy(env.obs_size, env.num_actions, hidden_size, num_layers)
+    policy_fn_optimizer = torch.optim.Adam(
+        policy_fn.parameters(), lr=learning_rate, weight_decay=1e-6
     )
-    schedular = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=iterations, eta_min=1e-6
+
+    value_fn = MLPValueFunction(env.obs_size, hidden_size, num_layers)
+    value_fn_optimizer = torch.optim.Adam(
+        value_fn.parameters(), lr=learning_rate, weight_decay=1e-6
     )
 
     for i_iter in range(1, iterations + 1):
-        data = collect(env, agent, collection_size, device)
+        data = collect(
+            env,
+            policy_fn,
+            value_fn,
+            gae_gamma,
+            gae_lambda,
+            collection_size,
+            device,
+        )
 
         data = DataLoader(
             data,
@@ -242,14 +254,20 @@ def main(
             drop_last=True,
         )
 
-        train(data, agent, optimizer, ppo_epsilon, epochs)
-
-        schedular.step()
+        train(
+            data,
+            policy_fn,
+            policy_fn_optimizer,
+            value_fn,
+            value_fn_optimizer,
+            ppo_epsilon,
+            epochs,
+        )
 
         print(f"Iteration {i_iter}")
 
         if i_iter % eval_every == 0:
-            evaluate(env, agent, eval_episodes, device)
+            evaluate(env, policy_fn, eval_episodes, device)
 
 
 if __name__ == "__main__":

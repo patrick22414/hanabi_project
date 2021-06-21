@@ -1,5 +1,5 @@
 import torch
-from torch.nn import Module, ReLU, Sequential, Linear, Identity
+from torch.nn import Identity, Linear, Module, ReLU, Sequential
 from torch.nn import functional as F
 
 
@@ -19,6 +19,9 @@ class MLPPolicy(Module):
                 for i in range(num_layers + 1)
             ]
         )
+
+        for p in self.layers[-1].parameters():
+            torch.nn.init.zeros_(p)
 
     def forward(self, obs, logp=True):
         logits = self.layers(obs)
@@ -46,6 +49,9 @@ class MLPValueFunction(Module):
             ]
         )
 
+        for p in self.layers[-1].parameters():
+            torch.nn.init.zeros_(p)
+
     def forward(self, obs):
-        value = self.layers(obs)
+        value = self.layers(obs).squeeze()
         return value
