@@ -15,7 +15,8 @@ But either DQN is too hard to train or it doesn't work at all.
 ## To-do
 
 ### PPO
-- logging
+- logging and checkpointing
+- actor multiprocessing
 - RNN
 - ad hoc agents
 
