@@ -1,3 +1,5 @@
+import argparse
+import json
 from typing import Iterator
 
 import numpy as np
@@ -34,6 +36,7 @@ def collect(
     glexp = torch.tensor(gae_gamma * gae_lambda, device=device)
     glexp = glexp.pow(torch.arange(100))  # max length of hanabi is about 88
 
+    # exponentials of gamma
     gammaexp = torch.tensor(gae_gamma, device=device).pow(torch.arange(100))
 
     def _gae(frames: list[Frame]):
@@ -46,7 +49,9 @@ def collect(
 
         deltas = rewards + gae_gamma * values_t1 - values
 
-        empret = torch.zeros_like(rewards)  # empirical returns
+        # empirical return is a discounted sum of all future returns
+        # advantage is a discounted sum of all future deltas
+        empret = torch.zeros_like(rewards)
         advantages = torch.zeros_like(rewards)
         for t in range(episode_length):
             empret[t] = torch.sum(gammaexp[: episode_length - t] * rewards[t:])
@@ -69,7 +74,7 @@ def collect(
         while not is_terminal:
             obs = torch.tensor(env.observation, dtype=torch.float, device=device)
 
-            # policy_fn(observation) -> action
+            # action selection
             logp = policy_fn(obs)
             prob = torch.exp(logp)
 
@@ -84,9 +89,9 @@ def collect(
             obs_t1 = obs.new_tensor(obs_t1)
             reward = obs.new_tensor(reward)
 
-            # value_fn(observation) -> value_estimate
+            # value estimation
             value = value_fn(obs)
-            value_t1 = value_fn(obs_t1) if not is_terminal else value.new_tensor(0)
+            value_t1 = value_fn(obs_t1) if not is_terminal else value.new_tensor(0.0)
 
             if is_terminal:
                 frame_type = FrameType.END
@@ -107,7 +112,9 @@ def collect(
 
             episode_frames.append(frame)
 
+        # compute advantages and empirical returns in GAE
         episode_frames = _gae(episode_frames)
+
         data.extend(episode_frames)
 
     return data[:collection_size]
@@ -130,12 +137,13 @@ def train(
             logps = policy_fn(batch.observations)
             logps = torch.gather(logps, dim=1, index=batch.actions)
 
+            # policy surrogate objective
             ratio = torch.exp(logps - batch.action_logps).squeeze()
-            loss_1 = ratio * batch.advantages
-            loss_2 = torch.clip(loss_1, 1 - ppo_epsilon, 1 + ppo_epsilon)
-            loss_ppo = torch.mean(torch.minimum(loss_1, loss_2))
+            surr_1 = ratio * batch.advantages
+            surr_2 = torch.clip(surr_1, 1 - ppo_epsilon, 1 + ppo_epsilon)
+            surr_ppo = -torch.mean(torch.minimum(surr_1, surr_2))
 
-            loss_ppo.backward()
+            surr_ppo.backward()
             policy_fn_optimizer.step()
 
             # update value function
@@ -202,7 +210,7 @@ def main(
     env_players=2,
     # collection config
     iterations=1000,
-    collection_size=1000,
+    collection_size=10000,
     gae_gamma=0.99,
     gae_lambda=0.99,
     # neural network config
@@ -212,7 +220,7 @@ def main(
     batch_size=1000,
     dataloader_workers=0,
     epochs=1,
-    learning_rate=1e-3,
+    learning_rate=1e-4,
     ppo_epsilon=0.2,
     # eval_config
     eval_every=1,  # every n iterations
@@ -271,4 +279,20 @@ def main(
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-c", "--config", type=str, required=True)
+    parser.add_argument("-d", "--device", type=int, default=0)
+
+    args = parser.parse_args()
+
+    if torch.cuda.is_available():
+        device = torch.device(f"cuda:{args.device}")
+    else:
+        device = torch.device("cpu")
+
+    with open(args.config, "r") as fi:
+        config = json.load(fi)
+
+    config["device"] = device
+
+    main(**config)

@@ -1,20 +1,24 @@
 # hanabi_project
 
 ## PPO
-Now there is a PPO implementation as well!
+Now there is a PPO (with GAE) implementation as well!
 
-But it's definitely not working.
+And it's finally (kind of) working!
+
+We now have a score of ~4/25 at 1M steps. Not good, but it's a start.
 
 ## DQN
-This is a (Dueling & Double) DQN implementation for the Hanabi game.
+There is a (Dueling & Double) DQN implementation for the Hanabi game.
 
-I'm not sure if it works yet because I don't have the hardware to train for 100M steps.
+But either DQN is too hard to train or it doesn't work at all.
 
 ## To-do
-- PPO
-    - value function
-    - GAE
-    - RNN
-- Project
-    - logging
-    - ad hoc evaluation
+
+### PPO
+- logging
+- RNN
+- ad hoc agents
+
+### DQN
+- priotized replay
+- refactoring
