@@ -63,6 +63,6 @@ class PPOEnvironment(object):
         obs = self._encoder.encode(self._state.observation(player))
         return obs
 
-    def _make_legal_moves(self) -> list[int]:
+    def _make_legal_moves(self):
         legal_moves = [self.get_move_uid(m) for m in self._state.legal_moves()]
         return legal_moves

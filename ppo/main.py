@@ -1,6 +1,6 @@
 import argparse
 import json
-from typing import Iterator
+from typing import Iterator, List
 
 import numpy as np
 import torch
@@ -39,7 +39,7 @@ def collect(
     # exponentials of gamma
     gammaexp = torch.tensor(gae_gamma, device=device).pow(torch.arange(100))
 
-    def _gae(frames: list[Frame]):
+    def _gae(frames: List[Frame]):
         """Nested function for Generalised Advantage Estimation"""
         episode_length = len(frames)
 
@@ -63,7 +63,7 @@ def collect(
 
         return frames
 
-    data: list[Frame] = []
+    data: List[Frame] = []
 
     while len(data) < collection_size:
         env.reset()

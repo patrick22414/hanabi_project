@@ -1,7 +1,9 @@
+from typing import List
+
 import numpy as np
 
 
-def action_histogram(actions: list[str]):
+def action_histogram(actions: List[str]):
     values, counts = np.unique(actions, return_counts=True)
 
     line_1, line_2 = "\t", "\t"

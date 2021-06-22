@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
+from typing import List
 
 import torch
 
@@ -20,7 +21,7 @@ class Frame:
 
 
 class FrameBatch:
-    def __init__(self, frames: list[Frame]):
+    def __init__(self, frames: List[Frame]):
         self.frame_types = [f.frame_type for f in frames]
         self.observations = torch.stack([f.observation for f in frames])
         self.action_logps = torch.stack([f.action_logp for f in frames])
