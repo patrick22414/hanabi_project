@@ -1,28 +1,28 @@
 import argparse
 import json
+import random
+from time import perf_counter
 from typing import Iterator, List
 
 import numpy as np
 import torch
-from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
+from ppo.agent import MLPPolicy, MLPValueFunction, PPOAgent
 from ppo.data import Frame, FrameBatch, FrameType
 from ppo.env import PPOEnvironment
-from ppo.module import MLPPolicy, MLPValueFunction
+from ppo.log import log_collect, log_eval, log_main, log_train
 from ppo.utils import action_histogram
 
 
 @torch.no_grad()
 def collect(
     env: PPOEnvironment,
-    policy_fn: nn.Module,
-    value_fn: nn.Module,
+    agent: PPOAgent,
     gae_gamma: float,
     gae_lambda: float,
     collection_size: int,
-    device: torch.device,
 ):
     """Collection phase in PG iteration
 
@@ -33,11 +33,11 @@ def collect(
     """
 
     # maximum length of a hanabi game is about 88
-    exponents = torch.arange(100, device=device)
+    exponents = torch.arange(100)
     # exponentials of (gamma * lambda), ie [1.0, (gl)^1, (gl)^2, ...]
-    glexp = torch.tensor(gae_gamma * gae_lambda, device=device).pow(exponents)
+    glexp = torch.tensor(gae_gamma * gae_lambda).pow(exponents)
     # exponentials of gamma
-    gammaexp = torch.tensor(gae_gamma, device=device).pow(exponents)
+    gammaexp = torch.tensor(gae_gamma).pow(exponents)
 
     def _gae(frames: List[Frame]):
         """Nested function for Generalised Advantage Estimation"""
@@ -72,10 +72,10 @@ def collect(
         is_terminal = False
 
         while not is_terminal:
-            obs = torch.tensor(env.observation, dtype=torch.float, device=device)
+            obs = torch.tensor(env.observation, dtype=torch.float)
 
             # action selection
-            logp = policy_fn(obs)
+            logp = agent.policy_fn(obs)
             prob = torch.exp(logp)
 
             illegal_mask = torch.ones_like(prob, dtype=torch.bool)
@@ -90,8 +90,10 @@ def collect(
             reward = obs.new_tensor(reward)
 
             # value estimation
-            value = value_fn(obs)
-            value_t1 = value_fn(obs_t1) if not is_terminal else value.new_tensor(0.0)
+            value = agent.value_fn(obs)
+            value_t1 = (
+                agent.value_fn(obs_t1) if not is_terminal else value.new_tensor(0.0)
+            )
 
             if is_terminal:
                 frame_type = FrameType.END
@@ -120,27 +122,33 @@ def collect(
     return data[:collection_size]
 
 
+def mp_collect(env_config, agent, gae_gamma, gae_lambda, collection_size):
+    env = PPOEnvironment(**env_config)
+    return collect(env, agent, gae_gamma, gae_lambda, collection_size)
+
+
 def train(
     data: Iterator[FrameBatch],
-    policy_fn: nn.Module,
+    agent: PPOAgent,
     policy_fn_optimizer: torch.optim.Optimizer,
-    value_fn: nn.Module,
     value_fn_optimizer: torch.optim.Optimizer,
-    ppo_epsilon: float,
+    epsilon: float,
     epochs: int,
+    device: torch.device,
 ):
     for i_epoch in range(epochs):
         for batch in data:
-            policy_fn_optimizer.zero_grad()
+            batch = batch.to(device)
 
             # update policy
-            logps = policy_fn(batch.observations)
+            policy_fn_optimizer.zero_grad()
+            logps = agent.policy_fn(batch.observations)
             logps = torch.gather(logps, dim=1, index=batch.actions)
 
             # policy surrogate objective
             ratio = torch.exp(logps - batch.action_logps).squeeze()
             surr_1 = ratio * batch.advantages
-            surr_2 = torch.clip(surr_1, 1 - ppo_epsilon, 1 + ppo_epsilon)
+            surr_2 = torch.clip(surr_1, 1 - epsilon, 1 + epsilon)
             surr_ppo = -torch.mean(torch.minimum(surr_1, surr_2))
 
             surr_ppo.backward()
@@ -148,8 +156,7 @@ def train(
 
             # update value function
             value_fn_optimizer.zero_grad()
-
-            values = value_fn(batch.observations)
+            values = agent.value_fn(batch.observations)
             loss_vf = F.smooth_l1_loss(values, batch.emprets)
 
             loss_vf.backward()
@@ -157,7 +164,7 @@ def train(
 
 
 @torch.no_grad()
-def evaluate(env, policy_fn, episodes=100, device="cpu"):
+def evaluate(env, agent, episodes=100):
     all_lengths = []
     all_rewards = []
     all_actions = []
@@ -171,9 +178,9 @@ def evaluate(env, policy_fn, episodes=100, device="cpu"):
         episode_reward = 0.0
 
         while not is_terminal:
-            obs = torch.tensor(env.observation, dtype=torch.float, device=device)
+            obs = torch.tensor(env.observation, dtype=torch.float)
 
-            logp = policy_fn(obs)
+            logp = agent.policy_fn(obs)
             prob = torch.exp(logp)
 
             illegal_mask = torch.ones_like(prob, dtype=torch.bool)
@@ -197,62 +204,63 @@ def evaluate(env, policy_fn, episodes=100, device="cpu"):
     avg_entropy = np.mean(all_entropy)
     action_hist = "\n" + action_histogram(all_actions)
 
-    print(
-        "Evaluate:",
-        f"avg_length={avg_length:.2f},",
-        f"avg_reward={avg_reward:.2f},",
-        f"avg_entropy={avg_entropy:.4f},",
-        f"action_histogram={action_hist}",
+    log_eval.info(
+        f"avg_length={avg_length:.2f}, "
+        f"avg_reward={avg_reward:.2f}, "
+        f"avg_entropy={avg_entropy:.4f}, "
+        f"action_histogram={action_hist}"
     )
 
 
 def main(
-    env_players=2,
+    env_players: int,
     # collection config
-    iterations=1000,
-    collection_size=10000,
-    gae_gamma=0.99,
-    gae_lambda=0.99,
+    iterations: int,
+    collection_size: int,
+    gae_gamma: float,
+    gae_lambda: float,
     # neural network config
-    hidden_size=512,
-    num_layers=2,
+    hidden_size: int,
+    num_layers: int,
     # training config
-    batch_size=1000,
-    dataloader_workers=0,
-    epochs=1,
-    learning_rate=1e-4,
-    ppo_epsilon=0.2,
+    batch_size: int,
+    dataloader_workers: int,
+    epochs: int,
+    learning_rate: float,
+    ppo_epsilon: float,
     # eval_config
-    eval_every=1,  # every n iterations
-    eval_episodes=100,
+    eval_every: int,  # every n iterations
+    eval_episodes: int,
     # misc
-    seed=-1,
-    device="cpu",
+    seed: int,
+    device: torch.device,
 ):
     env = PPOEnvironment(env_players, seed)
 
-    policy_fn = MLPPolicy(env.obs_size, env.num_actions, hidden_size, num_layers)
-    policy_fn = policy_fn.to(device)
-    policy_fn_optimizer = torch.optim.Adam(
-        policy_fn.parameters(), lr=learning_rate, weight_decay=1e-6
+    learn_agent = PPOAgent(
+        MLPPolicy(env.obs_size, env.num_actions, hidden_size, num_layers),
+        MLPValueFunction(env.obs_size, hidden_size, num_layers),
     )
+    actor_agent = PPOAgent(
+        MLPPolicy(env.obs_size, env.num_actions, hidden_size, num_layers),
+        MLPValueFunction(env.obs_size, hidden_size, num_layers),
+    )
+    actor_agent.load_state_dict(learn_agent.state_dict())
 
-    value_fn = MLPValueFunction(env.obs_size, hidden_size, num_layers)
-    value_fn = value_fn.to(device)
+    learn_agent.to(device)
+
+    policy_fn_optimizer = torch.optim.Adam(
+        learn_agent.policy_fn.parameters(), lr=learning_rate, weight_decay=1e-6
+    )
     value_fn_optimizer = torch.optim.Adam(
-        value_fn.parameters(), lr=learning_rate, weight_decay=1e-6
+        learn_agent.value_fn.parameters(), lr=learning_rate, weight_decay=1e-6
     )
 
     for i_iter in range(1, iterations + 1):
-        data = collect(
-            env,
-            policy_fn,
-            value_fn,
-            gae_gamma,
-            gae_lambda,
-            collection_size,
-            device,
-        )
+        log_main.info(f"====== Iteration {i_iter}/{iterations} ======")
+
+        start = perf_counter()
+        data = collect(env, actor_agent, gae_gamma, gae_lambda, collection_size)
 
         data = DataLoader(
             data,
@@ -262,20 +270,24 @@ def main(
             collate_fn=FrameBatch,
         )
 
+        log_collect.info(f"collected in {perf_counter() - start:.2f} s")
+
+        start = perf_counter()
         train(
             data,
-            policy_fn,
+            learn_agent,
             policy_fn_optimizer,
-            value_fn,
             value_fn_optimizer,
             ppo_epsilon,
             epochs,
+            device,
         )
 
-        print(f"Iteration {i_iter}")
+        log_train.info(f"trained in {perf_counter() - start:.2f} s")
 
+        actor_agent.load_state_dict(learn_agent.state_dict())
         if i_iter % eval_every == 0:
-            evaluate(env, policy_fn, eval_episodes, device)
+            evaluate(env, actor_agent, eval_episodes)
 
 
 if __name__ == "__main__":
@@ -285,14 +297,29 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # parse config file
+    with open(args.config, "r") as fi:
+        config = json.load(fi)
+
+    if "collect_workers" in config:
+        log_main.warning(
+            "You are not running main_mp. `collect_workers` is multiplied onto `collection_size` instead"
+        )
+        config["collection_size"] *= config["collect_workers"]
+        del config["collect_workers"]
+
+    if "seed" not in config or config["seed"] < 0:
+        config["seed"] = random.randint(0, 999)
+
+    random.seed(config["seed"])
+    torch.manual_seed(config["seed"])
+
+    print(">>>", config)
+
+    # choose device
     if torch.cuda.is_available():
         device = torch.device(f"cuda:{args.device}")
     else:
         device = torch.device("cpu")
 
-    with open(args.config, "r") as fi:
-        config = json.load(fi)
-
-    config["device"] = device
-
-    main(**config)
+    main(**config, device=device)

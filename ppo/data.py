@@ -37,3 +37,12 @@ class FrameBatch:
         self.advantages = self.advantages.pin_memory()
 
         return self
+
+    def to(self, device):
+        self.observations = self.observations.to(device)
+        self.action_logps = self.action_logps.to(device)
+        self.actions = self.actions.to(device)
+        self.emprets = self.emprets.to(device)
+        self.advantages = self.advantages.to(device)
+
+        return self

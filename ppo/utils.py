@@ -6,10 +6,11 @@ import numpy as np
 def action_histogram(actions: List[str]):
     values, counts = np.unique(actions, return_counts=True)
 
-    line_1, line_2 = "\t", "\t"
+    line_1, line_2 = " " * 52, " " * 52
 
     for v, c in zip(map(str, values), map(str, counts)):
-        size = max(len(v), len(c)) + 2
+        # size = max(len(v), len(c)) + 2
+        size = 12 + 2
         line_1 += v.ljust(size, " ")
         line_2 += c.ljust(size, " ")
 

@@ -1,6 +1,39 @@
+from dataclasses import dataclass
+
 import torch
 from torch.nn import Identity, Linear, Module, ReLU, Sequential
 from torch.nn import functional as F
+
+
+# @dataclass
+# class PPOAgent:
+#     policy_fn: Module
+#     value_fn: Module
+
+#     def to(self, device):
+#         self.policy_fn.to(device)
+#         self.value_fn.to(device)
+
+#     def state_dict(self):
+#         return {
+#             "policy_fn": self.policy_fn.state_dict(),
+#             "value_fn": self.value_fn.state_dict(),
+#         }
+
+#     def load_state_dict(self, state_dict):
+#         self.policy_fn.load_state_dict(state_dict["policy_fn"])
+#         self.value_fn.load_state_dict(state_dict["value_fn"])
+
+
+class PPOAgent(Module):
+    policy_fn: Module
+    value_fn: Module
+
+    def __init__(self, policy_fn, value_fn):
+        super().__init__()
+
+        self.add_module("policy_fn", policy_fn)
+        self.add_module("value_fn", value_fn)
 
 
 class MLPPolicy(Module):
