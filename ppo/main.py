@@ -32,12 +32,12 @@ def collect(
         3. Return a list of frames
     """
 
+    # maximum length of a hanabi game is about 88
+    exponents = torch.arange(100, device=device)
     # exponentials of (gamma * lambda), ie [1.0, (gl)^1, (gl)^2, ...]
-    glexp = torch.tensor(gae_gamma * gae_lambda, device=device)
-    glexp = glexp.pow(torch.arange(100))  # max length of hanabi is about 88
-
+    glexp = torch.tensor(gae_gamma * gae_lambda, device=device).pow(exponents)
     # exponentials of gamma
-    gammaexp = torch.tensor(gae_gamma, device=device).pow(torch.arange(100))
+    gammaexp = torch.tensor(gae_gamma, device=device).pow(exponents)
 
     def _gae(frames: List[Frame]):
         """Nested function for Generalised Advantage Estimation"""
@@ -232,11 +232,13 @@ def main(
     env = PPOEnvironment(env_players, seed)
 
     policy_fn = MLPPolicy(env.obs_size, env.num_actions, hidden_size, num_layers)
+    policy_fn = policy_fn.to(device)
     policy_fn_optimizer = torch.optim.Adam(
         policy_fn.parameters(), lr=learning_rate, weight_decay=1e-6
     )
 
     value_fn = MLPValueFunction(env.obs_size, hidden_size, num_layers)
+    value_fn = value_fn.to(device)
     value_fn_optimizer = torch.optim.Adam(
         value_fn.parameters(), lr=learning_rate, weight_decay=1e-6
     )
@@ -258,8 +260,6 @@ def main(
             shuffle=True,
             num_workers=dataloader_workers,
             collate_fn=FrameBatch,
-            pin_memory=True,
-            drop_last=True,
         )
 
         train(
