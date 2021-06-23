@@ -56,13 +56,9 @@ class MLPPolicy(Module):
         for p in self.layers[-1].parameters():
             torch.nn.init.zeros_(p)
 
-    def forward(self, obs, logp=True):
+    def forward(self, obs):
         logits = self.layers(obs)
-
-        if logp:
-            return F.log_softmax(logits, dim=-1)
-        else:
-            return F.softmax(logits, dim=-1)
+        return logits
 
 
 class MLPValueFunction(Module):

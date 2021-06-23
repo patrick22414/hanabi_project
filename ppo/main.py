@@ -1,5 +1,6 @@
 import argparse
 import json
+from logging import log
 import random
 from time import perf_counter
 from typing import Iterator, List
@@ -17,13 +18,7 @@ from ppo.utils import action_histogram
 
 
 @torch.no_grad()
-def collect(
-    env: PPOEnvironment,
-    agent: PPOAgent,
-    gae_gamma: float,
-    gae_lambda: float,
-    collection_size: int,
-):
+def collect(env, agent, gae_gamma, gae_lambda, collection_size, device):
     """Collection phase in PG iteration
 
     It does:
@@ -33,11 +28,11 @@ def collect(
     """
 
     # maximum length of a hanabi game is about 88
-    exponents = torch.arange(100)
+    exponents = torch.arange(100, device=device)
     # exponentials of (gamma * lambda), ie [1.0, (gl)^1, (gl)^2, ...]
-    glexp = torch.tensor(gae_gamma * gae_lambda).pow(exponents)
+    glexp = torch.tensor(gae_gamma * gae_lambda, device=device).pow(exponents)
     # exponentials of gamma
-    gammaexp = torch.tensor(gae_gamma).pow(exponents)
+    gammaexp = torch.tensor(gae_gamma, device=device).pow(exponents)
 
     def _gae(frames: List[Frame]):
         """Nested function for Generalised Advantage Estimation"""
@@ -67,25 +62,26 @@ def collect(
 
     while len(data) < collection_size:
         env.reset()
+
+        is_terminal = False
         episode_frames = []
         frame_type = FrameType.START
-        is_terminal = False
 
         while not is_terminal:
-            obs = torch.tensor(env.observation, dtype=torch.float)
+            obs = torch.tensor(env.observation, dtype=torch.float, device=device)
+            legal_moves = env.legal_moves
 
             # action selection
-            logp = agent.policy_fn(obs)
-            prob = torch.exp(logp)
+            logits = agent.policy_fn(obs)
+            logits = logits[legal_moves]
+            logp = F.log_softmax(logits, dim=-1)
 
-            illegal_mask = torch.ones_like(prob, dtype=torch.bool)
-            illegal_mask[env.legal_moves] = False
-            prob[illegal_mask] = 0.0
-
-            action = torch.multinomial(prob, 1)
+            action = torch.multinomial(torch.exp(logp), 1).item()
+            action_logp = logp[action]
+            action = legal_moves[action]
 
             # env update
-            obs_t1, reward, is_terminal = env.step(action.item())
+            obs_t1, reward, is_terminal = env.step(action)
             obs_t1 = obs.new_tensor(obs_t1)
             reward = obs.new_tensor(reward)
 
@@ -101,11 +97,12 @@ def collect(
             frame = Frame(
                 frame_type=frame_type,
                 observation=obs,
-                action_logp=logp[action],
-                action=action,
+                action_logp=action_logp.view(1),
+                action=torch.tensor(action).view(1),
                 value=value,
                 value_t1=value_t1,
                 reward=reward,
+                legal_moves=legal_moves,
                 # empret and advantage default to None and will be computed in GAE
             )
 
@@ -122,19 +119,8 @@ def collect(
     return data[:collection_size]
 
 
-def mp_collect(env_config, agent, gae_gamma, gae_lambda, collection_size):
-    env = PPOEnvironment(**env_config)
-    return collect(env, agent, gae_gamma, gae_lambda, collection_size)
-
-
 def train(
-    data: Iterator[FrameBatch],
-    agent: PPOAgent,
-    policy_fn_optimizer: torch.optim.Optimizer,
-    value_fn_optimizer: torch.optim.Optimizer,
-    epsilon: float,
-    epochs: int,
-    device: torch.device,
+    data, agent, policy_fn_optimizer, value_fn_optimizer, epsilon, epochs, device
 ):
     for i_epoch in range(epochs):
         for batch in data:
@@ -142,7 +128,14 @@ def train(
 
             # update policy
             policy_fn_optimizer.zero_grad()
-            logps = agent.policy_fn(batch.observations)
+            logits = agent.policy_fn(batch.observations)
+
+            illegal_mask = torch.ones_like(logits, dtype=torch.bool)
+            for x, idx in zip(illegal_mask, batch.legal_moves):
+                x[idx] = False
+
+            logits[illegal_mask] = float("-inf")
+            logps = F.log_softmax(logits, dim=-1)
             logps = torch.gather(logps, dim=1, index=batch.actions)
 
             # policy surrogate objective
@@ -164,7 +157,7 @@ def train(
 
 
 @torch.no_grad()
-def evaluate(env, agent, episodes=100):
+def evaluate(env, agent, episodes=100, device="cpu"):
     all_lengths = []
     all_rewards = []
     all_actions = []
@@ -178,16 +171,16 @@ def evaluate(env, agent, episodes=100):
         episode_reward = 0.0
 
         while not is_terminal:
-            obs = torch.tensor(env.observation, dtype=torch.float)
+            obs = torch.tensor(env.observation, dtype=torch.float, device=device)
+            legal_moves = env.legal_moves
 
-            logp = agent.policy_fn(obs)
+            logits = agent.policy_fn(obs)
+            logits = logits[legal_moves]
+            logp = F.log_softmax(logits, dim=-1)
             prob = torch.exp(logp)
 
-            illegal_mask = torch.ones_like(prob, dtype=torch.bool)
-            illegal_mask[env.legal_moves] = False
-            prob[illegal_mask] = 0.0
-
             action = torch.multinomial(prob, 1).item()
+            action = legal_moves[action]
 
             _, reward, is_terminal = env.step(action)  # discarding obs_t1
 
@@ -234,21 +227,14 @@ def main(
     # misc
     seed: int,
     device: torch.device,
+    actor_device: torch.device,
 ):
     env = PPOEnvironment(env_players, seed)
 
     learn_agent = PPOAgent(
         MLPPolicy(env.obs_size, env.num_actions, hidden_size, num_layers),
         MLPValueFunction(env.obs_size, hidden_size, num_layers),
-    )
-    actor_agent = PPOAgent(
-        MLPPolicy(env.obs_size, env.num_actions, hidden_size, num_layers),
-        MLPValueFunction(env.obs_size, hidden_size, num_layers),
-    )
-    actor_agent.load_state_dict(learn_agent.state_dict())
-
-    learn_agent.to(device)
-
+    ).to(device)
     policy_fn_optimizer = torch.optim.Adam(
         learn_agent.policy_fn.parameters(), lr=learning_rate, weight_decay=1e-6
     )
@@ -256,12 +242,19 @@ def main(
         learn_agent.value_fn.parameters(), lr=learning_rate, weight_decay=1e-6
     )
 
+    actor_agent = PPOAgent(
+        MLPPolicy(env.obs_size, env.num_actions, hidden_size, num_layers),
+        MLPValueFunction(env.obs_size, hidden_size, num_layers),
+    ).to(actor_device)
+    actor_agent.load_state_dict(learn_agent.state_dict())
+
     for i_iter in range(1, iterations + 1):
         log_main.info(f"====== Iteration {i_iter}/{iterations} ======")
 
         start = perf_counter()
-        data = collect(env, actor_agent, gae_gamma, gae_lambda, collection_size)
-
+        data = collect(
+            env, actor_agent, gae_gamma, gae_lambda, collection_size, actor_device
+        )
         data = DataLoader(
             data,
             batch_size,
@@ -286,14 +279,16 @@ def main(
         log_train.info(f"trained in {perf_counter() - start:.2f} s")
 
         actor_agent.load_state_dict(learn_agent.state_dict())
+
         if i_iter % eval_every == 0:
-            evaluate(env, actor_agent, eval_episodes)
+            evaluate(env, actor_agent, eval_episodes, actor_device)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", type=str, required=True)
     parser.add_argument("-d", "--device", type=int, default=0)
+    parser.add_argument("-ad", "--actor-device", type=int, default=-1)
 
     args = parser.parse_args()
 
@@ -317,9 +312,16 @@ if __name__ == "__main__":
     print(">>>", config)
 
     # choose device
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and args.device > 0:
         device = torch.device(f"cuda:{args.device}")
     else:
         device = torch.device("cpu")
 
-    main(**config, device=device)
+    if torch.cuda.is_available() and args.actor_device > 0:
+        actor_device = torch.device(f"cuda:{args.device}")
+    else:
+        actor_device = torch.device("cpu")
+
+    print(">>> device:", device, "actor_device:", actor_device)
+
+    main(**config, device=device, actor_device=actor_device)

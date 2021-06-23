@@ -14,9 +14,9 @@ from ppo.log import log_collect, log_main, log_train
 from ppo.main import collect, evaluate, train
 
 
-def mp_collect(env_config, agent, gae_gamma, gae_lambda, collection_size):
+def mp_collect(env_config, agent, gae_gamma, gae_lambda, collection_size, device):
     env = PPOEnvironment(**env_config)
-    return collect(env, agent, gae_gamma, gae_lambda, collection_size)
+    return collect(env, agent, gae_gamma, gae_lambda, collection_size, device)
 
 
 def main_mp(
@@ -42,6 +42,7 @@ def main_mp(
     # misc
     seed: int,
     device: torch.device,
+    actor_device: torch.device,
 ):
     # this env is only used for initialising agents and evaluation
     env = PPOEnvironment(env_players, seed)
@@ -50,21 +51,19 @@ def main_mp(
     learn_agent = PPOAgent(
         MLPPolicy(env.obs_size, env.num_actions, hidden_size, num_layers),
         MLPValueFunction(env.obs_size, hidden_size, num_layers),
-    )
-    actor_agent = PPOAgent(
-        MLPPolicy(env.obs_size, env.num_actions, hidden_size, num_layers),
-        MLPValueFunction(env.obs_size, hidden_size, num_layers),
-    )
-    actor_agent.load_state_dict(learn_agent.state_dict())
-
-    learn_agent.to(device)
-
+    ).to(device)
     policy_fn_optimizer = torch.optim.Adam(
         learn_agent.policy_fn.parameters(), lr=learning_rate, weight_decay=1e-6
     )
     value_fn_optimizer = torch.optim.Adam(
         learn_agent.value_fn.parameters(), lr=learning_rate, weight_decay=1e-6
     )
+
+    actor_agent = PPOAgent(
+        MLPPolicy(env.obs_size, env.num_actions, hidden_size, num_layers),
+        MLPValueFunction(env.obs_size, hidden_size, num_layers),
+    ).to(actor_device)
+    actor_agent.load_state_dict(learn_agent.state_dict())
 
     with mp.Pool(collect_workers) as pool:
         for i_iter in range(1, iterations + 1):
@@ -80,13 +79,12 @@ def main_mp(
                         gae_gamma,
                         gae_lambda,
                         collection_size,
+                        actor_device,
                     )
                     for i in range(collect_workers)
                 ],
             )
             data = sum(data, [])
-            # data = collect(env, actor_agent, gae_gamma, gae_lambda, collection_size)
-
             data = DataLoader(
                 data,
                 batch_size,
@@ -112,7 +110,7 @@ def main_mp(
 
             actor_agent.load_state_dict(learn_agent.state_dict())
             if i_iter % eval_every == 0:
-                evaluate(env, actor_agent, eval_episodes)
+                evaluate(env, actor_agent, eval_episodes, actor_device)
 
             seed += collect_workers
 
@@ -121,6 +119,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", type=str, required=True)
     parser.add_argument("-d", "--device", type=int, default=0)
+    parser.add_argument("-ad", "--actor-device", type=int, default=-1)
 
     args = parser.parse_args()
 
@@ -137,9 +136,16 @@ if __name__ == "__main__":
     print(">>>", config)
 
     # choose device
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and args.device > 0:
         device = torch.device(f"cuda:{args.device}")
     else:
         device = torch.device("cpu")
 
-    main_mp(**config, device=device)
+    if torch.cuda.is_available() and args.actor_device > 0:
+        actor_device = torch.device(f"cuda:{args.device}")
+    else:
+        actor_device = torch.device("cpu")
+
+    print(">>> device:", device, "actor_device:", actor_device)
+
+    main_mp(**config, device=device, actor_device=actor_device)

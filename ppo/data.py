@@ -18,6 +18,7 @@ class Frame:
     reward: torch.Tensor  # scalar
     empret: torch.Tensor = None  # scalar, empirical return
     advantage: torch.Tensor = None  # scalar
+    legal_moves: List[int] = None
 
 
 class FrameBatch:
@@ -28,15 +29,7 @@ class FrameBatch:
         self.actions = torch.stack([f.action for f in frames])
         self.emprets = torch.stack([f.empret for f in frames])
         self.advantages = torch.stack([f.advantage for f in frames])
-
-    def pin_memory(self):
-        self.observations = self.observations.pin_memory()
-        self.action_logps = self.action_logps.pin_memory()
-        self.actions = self.actions.pin_memory()
-        self.emprets = self.emprets.pin_memory()
-        self.advantages = self.advantages.pin_memory()
-
-        return self
+        self.legal_moves = [f.legal_moves for f in frames]
 
     def to(self, device):
         self.observations = self.observations.to(device)

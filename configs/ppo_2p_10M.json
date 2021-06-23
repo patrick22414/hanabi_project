@@ -2,8 +2,8 @@
   "env_players": 2,
 
   "iterations": 10,
-  "collection_size": 5000,
-  "collect_workers": 4,
+  "collection_size": 2000,
+  "collect_workers": 5,
   "gae_gamma": 0.99,
   "gae_lambda": 0.95,
 
