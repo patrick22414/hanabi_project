@@ -1,14 +1,14 @@
 {
-  "env_preset": "small",
+  "env_preset": "full",
   "env_players": 2,
 
-  "iterations": 1000,
+  "iterations": 10000,
   "collection_size": 2000,
   "collect_workers": 5,
   "gae_gamma": 0.99,
   "gae_lambda": 0.95,
 
-  "hidden_size": 256,
+  "hidden_size": 512,
   "num_layers": 2,
 
   "batch_size": 1024,

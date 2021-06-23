@@ -5,14 +5,15 @@ import time
 from datetime import datetime
 
 os.makedirs("logs", exist_ok=True)
-filename = f"logs/ppo.{datetime.utcnow():%Y-%m-%dT%HZ}.log"
+filename = f"logs/ppo.{datetime.utcnow():%Y-%m-%dT%H:%MZ}.log"
 
 fh = logging.FileHandler(filename, mode="w")
 sh = logging.StreamHandler(sys.stdout)
 
-FORMAT = "%(asctime)sZ  %(levelname)-7s  %(name)-11s  %(message)s"
+FORMAT = "%(asctime)sZ %(levelname)-7s %(name)-11s %(message)s"
+DATEFORMAT = "%Y-%m-%dT%H:%M:%S"
 
-formatter = logging.Formatter(fmt=FORMAT)
+formatter = logging.Formatter(fmt=FORMAT, datefmt=DATEFORMAT)
 formatter.converter = time.gmtime
 fh.setFormatter(formatter)
 sh.setFormatter(formatter)

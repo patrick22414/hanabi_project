@@ -1,6 +1,5 @@
 import argparse
 import json
-from logging import log
 import random
 from time import perf_counter
 from typing import Iterator, List
@@ -120,9 +119,20 @@ def collect(env, agent, gae_gamma, gae_lambda, collection_size, device):
 
 
 def train(
-    data, agent, policy_fn_optimizer, value_fn_optimizer, epsilon, epochs, device
+    data,
+    agent,
+    policy_fn_optimizer,
+    value_fn_optimizer,
+    epsilon,
+    entropy_coeff,
+    epochs,
+    device,
 ):
-    for i_epoch in range(epochs):
+    for i_epoch in range(1, epochs + 1):
+        losses_ppo = []
+        losses_ent = []
+        losses_vf = []
+
         for batch in data:
             batch = batch.to(device)
 
@@ -130,21 +140,26 @@ def train(
             policy_fn_optimizer.zero_grad()
             logits = agent.policy_fn(batch.observations)
 
+            # compute entropy
+            # to encourage entropy, we are minimising -entropy
+            ent_logps = F.log_softmax(logits, dim=-1)
+            loss_ent = torch.mean(torch.sum(ent_logps.exp() * ent_logps, dim=-1))
+
             illegal_mask = torch.ones_like(logits, dtype=torch.bool)
             for x, idx in zip(illegal_mask, batch.legal_moves):
                 x[idx] = False
 
-            logits[illegal_mask] = float("-inf")
-            logps = F.log_softmax(logits, dim=-1)
+            masked_logits = logits.masked_fill(illegal_mask, float("-inf"))
+            logps = F.log_softmax(masked_logits, dim=-1)
             logps = torch.gather(logps, dim=1, index=batch.actions)
 
-            # policy surrogate objective
+            # to maximise the surrogate objective, we minimise loss_ppo = -surrogate
             ratio = torch.exp(logps - batch.action_logps).squeeze()
             surr_1 = ratio * batch.advantages
-            surr_2 = torch.clip(surr_1, 1 - epsilon, 1 + epsilon)
-            surr_ppo = -torch.mean(torch.minimum(surr_1, surr_2))
+            surr_2 = torch.clip(ratio, 1 - epsilon, 1 + epsilon) * batch.advantages
+            loss_ppo = -torch.mean(torch.minimum(surr_1, surr_2))
 
-            surr_ppo.backward()
+            (loss_ppo + entropy_coeff * loss_ent).backward()
             policy_fn_optimizer.step()
 
             # update value function
@@ -154,6 +169,21 @@ def train(
 
             loss_vf.backward()
             value_fn_optimizer.step()
+
+            losses_ppo.append(loss_ppo.item())
+            losses_ent.append(loss_ent.item())
+            losses_vf.append(loss_vf.item())
+
+        avg_loss_ppo = np.mean(losses_ppo)
+        avg_loss_ent = np.mean(losses_ent)
+        avg_loss_vf = np.mean(losses_vf)
+
+        log_train.info(
+            f"Training epoch {i_epoch}: "
+            f"average loss_ppo={avg_loss_ppo:.4f}, "
+            f"loss_ent={avg_loss_ent:.4f}, "
+            f"loss_vf={avg_loss_vf:.4f}"
+        )
 
 
 @torch.no_grad()
@@ -175,6 +205,10 @@ def evaluate(env, agent, episodes=100, device="cpu"):
             legal_moves = env.legal_moves
 
             logits = agent.policy_fn(obs)
+
+            ent_logps = F.log_softmax(logits, dim=-1)
+            all_entropy.append(-torch.sum(ent_logps.exp() * ent_logps).item())
+
             logits = logits[legal_moves]
             logp = F.log_softmax(logits, dim=-1)
             prob = torch.exp(logp)
@@ -187,7 +221,6 @@ def evaluate(env, agent, episodes=100, device="cpu"):
             episode_length += 1
             episode_reward += reward
             all_actions.append(env.get_move(action).type().name)
-            all_entropy.append(-torch.sum(prob * logp).item())
 
         all_lengths.append(episode_length)
         all_rewards.append(episode_reward)
@@ -220,8 +253,10 @@ def main(
     batch_size: int,
     dataloader_workers: int,
     epochs: int,
-    learning_rate: float,
+    policy_fn_optim: dict,
+    value_fn_optim: dict,
     ppo_epsilon: float,
+    entropy_coeff: float,
     # eval_config
     eval_every: int,  # every n iterations
     eval_episodes: int,
@@ -237,10 +272,10 @@ def main(
         MLPValueFunction(env.obs_size, hidden_size, num_layers),
     ).to(device)
     policy_fn_optimizer = torch.optim.Adam(
-        learn_agent.policy_fn.parameters(), lr=learning_rate, weight_decay=1e-6
+        learn_agent.policy_fn.parameters(), **policy_fn_optim
     )
     value_fn_optimizer = torch.optim.Adam(
-        learn_agent.value_fn.parameters(), lr=learning_rate, weight_decay=1e-6
+        learn_agent.value_fn.parameters(), **value_fn_optim
     )
 
     actor_agent = PPOAgent(
@@ -256,7 +291,7 @@ def main(
         data = collect(
             env, actor_agent, gae_gamma, gae_lambda, collection_size, actor_device
         )
-        data = DataLoader(
+        dataloader = DataLoader(
             data,
             batch_size,
             shuffle=True,
@@ -264,20 +299,21 @@ def main(
             collate_fn=FrameBatch,
         )
 
-        log_collect.info(f"collected in {perf_counter() - start:.2f} s")
+        log_collect.info(f"Collection done in {perf_counter() - start:.2f} s")
 
         start = perf_counter()
         train(
-            data,
-            learn_agent,
-            policy_fn_optimizer,
-            value_fn_optimizer,
-            ppo_epsilon,
-            epochs,
-            device,
+            data=dataloader,
+            agent=learn_agent,
+            policy_fn_optimizer=policy_fn_optimizer,
+            value_fn_optimizer=value_fn_optimizer,
+            epsilon=ppo_epsilon,
+            entropy_coeff=entropy_coeff,
+            epochs=epochs,
+            device=device,
         )
 
-        log_train.info(f"trained in {perf_counter() - start:.2f} s")
+        log_train.info(f"Training done in {perf_counter() - start:.2f} s")
 
         actor_agent.load_state_dict(learn_agent.state_dict())
 
@@ -299,7 +335,7 @@ if __name__ == "__main__":
 
     if "collect_workers" in config:
         log_main.warning(
-            "You are not running main_mp. `collect_workers` is multiplied onto `collection_size` instead"
+            "No multiprocessing yet. `collect_workers` is multiplied onto `collection_size`"
         )
         config["collection_size"] *= config["collect_workers"]
         del config["collect_workers"]
@@ -310,7 +346,7 @@ if __name__ == "__main__":
     random.seed(config["seed"])
     torch.manual_seed(config["seed"])
 
-    print(">>>", config)
+    log_main.info("JSON config:\n" + json.dumps(config, indent=4))
 
     # choose device
     if torch.cuda.is_available() and args.device > 0:
@@ -323,6 +359,6 @@ if __name__ == "__main__":
     else:
         actor_device = torch.device("cpu")
 
-    print(">>> device:", device, "actor_device:", actor_device)
+    log_main.info(f"learn_agent device: {device}, actor_agent device: {actor_device}")
 
     main(**config, device=device, actor_device=actor_device)
