@@ -1,10 +1,10 @@
 import argparse
 import json
-import multiprocessing as mp
 import random
 from time import perf_counter
 
 import torch
+from torch import multiprocessing as mp
 from torch.utils.data import DataLoader
 
 from ppo.agent import MLPPolicy, MLPValueFunction, PPOAgent
@@ -16,7 +16,12 @@ from ppo.main import collect, evaluate, train
 
 def mp_collect(env_config, agent, gae_gamma, gae_lambda, collection_size, device):
     env = PPOEnvironment(**env_config)
-    return collect(env, agent, gae_gamma, gae_lambda, collection_size, device)
+    frames = collect(env, agent, gae_gamma, gae_lambda, collection_size, device)
+
+    for f in frames:
+        f.share_memory_()
+
+    return frames
 
 
 def main_mp(
@@ -51,7 +56,8 @@ def main_mp(
     learn_agent = PPOAgent(
         MLPPolicy(env.obs_size, env.num_actions, hidden_size, num_layers),
         MLPValueFunction(env.obs_size, hidden_size, num_layers),
-    ).to(device)
+    )
+    learn_agent = learn_agent.to(device)
     policy_fn_optimizer = torch.optim.Adam(
         learn_agent.policy_fn.parameters(), lr=learning_rate, weight_decay=1e-6
     )
@@ -62,7 +68,8 @@ def main_mp(
     actor_agent = PPOAgent(
         MLPPolicy(env.obs_size, env.num_actions, hidden_size, num_layers),
         MLPValueFunction(env.obs_size, hidden_size, num_layers),
-    ).to(actor_device)
+    )
+    actor_agent = actor_agent.to(actor_device).share_memory()
     actor_agent.load_state_dict(learn_agent.state_dict())
 
     with mp.Pool(collect_workers) as pool:
@@ -85,7 +92,7 @@ def main_mp(
                 ],
             )
             data = sum(data, [])
-            data = DataLoader(
+            dataloader = DataLoader(
                 data,
                 batch_size,
                 shuffle=True,
@@ -97,7 +104,7 @@ def main_mp(
 
             start = perf_counter()
             train(
-                data,
+                dataloader,
                 learn_agent,
                 policy_fn_optimizer,
                 value_fn_optimizer,
@@ -105,6 +112,8 @@ def main_mp(
                 epochs,
                 device,
             )
+
+            del data, dataloader
 
             log_train.info(f"trained in {perf_counter() - start:.2f} s")
 

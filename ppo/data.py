@@ -20,6 +20,20 @@ class Frame:
     advantage: torch.Tensor = None  # scalar
     legal_moves: List[int] = None
 
+    def share_memory_(self):
+        self.observation.share_memory_()
+        self.action_logp.share_memory_()
+        self.action.share_memory_()
+        self.value.share_memory_()
+        self.value_t1.share_memory_()
+        self.reward.share_memory_()
+        if self.empret is not None:
+            self.empret.share_memory_()
+        if self.advantage is not None:
+            self.advantage.share_memory_()
+
+        return self
+
 
 class FrameBatch:
     def __init__(self, frames: List[Frame]):

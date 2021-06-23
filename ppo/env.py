@@ -6,10 +6,30 @@ class ActionIsIllegal(RuntimeError):
 
 
 class PPOEnvironment(object):
-    def __init__(self, players, seed=-1):
+    def __init__(self, preset, players, seed=-1):
         super().__init__()
 
-        self._game = HanabiGame({"players": players, "seed": seed})
+        if preset == "full":
+            self._game = HanabiGame(
+                {
+                    "players": players,
+                    "observation_type": AgentObservationType.CARD_KNOWLEDGE.value,
+                    "seed": seed,
+                }
+            )
+        elif preset == "small":
+            self._game = HanabiGame(
+                {
+                    "players": players,
+                    "colors": 2,
+                    "rank": 5,
+                    "hand_size": 3,
+                    "max_information_tokens": 5,
+                    "max_life_tokens": 3,
+                    "observation_type": AgentObservationType.CARD_KNOWLEDGE.value,
+                    "seed": seed,
+                }
+            )
         self._encoder = ObservationEncoder(self._game)
 
         self.players = players

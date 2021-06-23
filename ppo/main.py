@@ -206,6 +206,7 @@ def evaluate(env, agent, episodes=100, device="cpu"):
 
 
 def main(
+    env_preset: str,
     env_players: int,
     # collection config
     iterations: int,
@@ -229,7 +230,7 @@ def main(
     device: torch.device,
     actor_device: torch.device,
 ):
-    env = PPOEnvironment(env_players, seed)
+    env = PPOEnvironment(env_preset, env_players, seed)
 
     learn_agent = PPOAgent(
         MLPPolicy(env.obs_size, env.num_actions, hidden_size, num_layers),

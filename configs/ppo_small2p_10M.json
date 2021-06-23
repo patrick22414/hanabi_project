@@ -1,7 +1,8 @@
 {
+  "env_preset": "small",
   "env_players": 2,
 
-  "iterations": 10,
+  "iterations": 1000,
   "collection_size": 2000,
   "collect_workers": 5,
   "gae_gamma": 0.99,
