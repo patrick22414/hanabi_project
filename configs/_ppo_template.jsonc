@@ -1,0 +1,46 @@
+{
+    "seed": -1,
+    "iterations": 1000,
+    "env_config": {
+        "preset": "full", // "full" | "small"
+        "players": 2,
+        "obs_type": "card_knowledge" // "minimal" | "card_knowledge" | "prev_action" | "both"
+    },
+    "agent_config": {
+        "policy": {
+            "type": "RNN", // "MLP" | "RNN"; case sensitive
+            "hidden_size": 256,
+            "num_layers": 2 // num hidden layers for the MLP/RNN
+        },
+        "value_fn": {
+            "type": "MLP",
+            "hidden_size": 256,
+            "num_layers": 2
+        }
+    },
+    "collect_config": {
+        "collection_type": "traj", // "frame" | "seg n" | "traj"; n is the seg length
+        "collection_size": 1000, // num of frames/segs/trajs collected
+        "collect_workers": 5, // NOT USED!
+        "gae_gamma": 0.99,
+        "gae_lambda": 0.95
+    },
+    "train_config": {
+        "epochs": 10,
+        "batch_size": 1024,
+        "policy_optimizer": {
+            "lr": 1e-4,
+            "weight_decay": 1e-6
+        },
+        "value_fn_optimizer": {
+            "lr": 1e-4,
+            "weight_decay": 1e-6
+        },
+        "ppo_clip": 0.2, // "epsilon"
+        "entropy_coeff": 0.01
+    },
+    "eval_config": {
+        "eval_every": 1,
+        "episodes": 100
+    }
+}
