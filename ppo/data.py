@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import List
 
 import torch
-from torch.nn.utils.rnn import pack_sequence
+from torch.nn.utils.rnn import pack_sequence, pad_sequence
 
 
 @dataclass
@@ -41,7 +41,8 @@ class FrameBatch:
 # Turn-based trajectory
 @dataclass
 class Trajectory:
-    observations: torch.Tensor  # [LT, enc_size]
+    observations: torch.Tensor  # [L, enc_size]
+    action_mask: torch.BoolTensor  # [L]
     illegal_mask: torch.BoolTensor  # [LT, num_actions]
     action_logps: torch.Tensor  # [LT, 1]
     actions: torch.LongTensor  # [LT, 1]
@@ -49,7 +50,6 @@ class Trajectory:
     # rewards: torch.Tensor  # [L]
     # values: torch.Tensor  # [L]
     # values_t1: torch.Tensor  # [L]
-    observations_all: torch.Tensor  # [L, enc_size]
     emprets: torch.Tensor  # [L]
 
 
@@ -62,10 +62,28 @@ class TrajectoryBatch:
         # reorder trajs according to their order in PackedSequence
         trajs = [trajs[i] for i in self.observations.sorted_indices]
 
-        self.illegal_mask = torch.cat([t.illegal_mask for t in trajs])  # [sum(LT), ...]
-        self.action_logps = torch.cat([t.action_logps for t in trajs])  # [sum(LT), 1]
-        self.actions = torch.cat([t.actions for t in trajs])  # [sum(LT), 1]
-        self.advantages = torch.cat([t.advantages for t in trajs])  # [sum(LT)]
+        self.action_mask = _pack_tensor([t.action_mask for t in trajs])
+        self.illegal_mask = _pack_tensor([t.illegal_mask for t in trajs])
+        self.action_logps = _pack_tensor([t.action_logps for t in trajs])
+        self.actions = _pack_tensor([t.actions for t in trajs])
+        self.advantages = _pack_tensor([t.advantages for t in trajs])
 
-        self.observations_all = torch.cat([t.observations_all for t in trajs])
-        self.emprets = torch.cat([t.emprets for t in trajs])  # [sum(L)]
+        self.emprets = _pack_tensor([t.emprets for t in trajs])  # [sum(L)]
+
+        # print(self.observations.data.shape)
+        # print(self.action_mask.shape)
+        # print(self.illegal_mask.shape)
+        # print(self.action_logps.shape)
+        # print(self.actions.shape)
+        # print(self.advantages.shape)
+        # print(self.emprets.shape)
+
+        # import ipdb
+
+        # ipdb.set_trace()
+
+
+def _pack_tensor(tensors) -> torch.Tensor:
+    padded = pad_sequence(tensors)
+    padded_mask = pad_sequence([torch.ones(len(x), dtype=torch.bool) for x in tensors])
+    return padded[padded_mask]

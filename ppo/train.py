@@ -35,7 +35,8 @@ def train(
 
             if is_rnn:
                 logits, _ = agent.policy(batch.observations)
-                logits = logits.data.masked_fill(batch.illegal_mask, float("-inf"))
+                logits = logits.data[batch.action_mask]
+                logits = logits.masked_fill(batch.illegal_mask, float("-inf"))
             else:
                 logits = agent.policy(batch.observations)
                 logits = logits.masked_fill(batch.illegal_mask, float("-inf"))
@@ -59,7 +60,7 @@ def train(
             value_fn_optimizer.zero_grad()
 
             if is_rnn:
-                values = agent.value_fn(batch.observations_all)
+                values = agent.value_fn(batch.observations.data)
             else:
                 values = agent.value_fn(batch.observations)
             loss_vf = F.smooth_l1_loss(values, batch.emprets)

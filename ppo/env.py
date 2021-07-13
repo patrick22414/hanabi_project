@@ -1,5 +1,5 @@
 from collections import deque
-from typing import List, Tuple
+from typing import Tuple
 
 import numpy as np
 from hanabi_learning_environment.pyhanabi import *
@@ -10,14 +10,15 @@ class ActionIsIllegal(RuntimeError):
 
 
 class PPOEnv:
-    def __init__(self, preset, players, enc_type, buffer_size=1, seed=-1):
+    def __init__(
+        self, preset, players, encoding_type="card_knowledge", buffer_size=1, seed=-1
+    ):
         super().__init__()
 
         if preset == "full":
             self._game = HanabiGame(
                 {
                     "players": players,
-                    "observation_type": AgentObservationType.CARD_KNOWLEDGE.value,
                     "seed": seed,
                 }
             )
@@ -30,7 +31,6 @@ class PPOEnv:
                     "hand_size": 3,
                     "max_information_tokens": 5,
                     "max_life_tokens": 3,
-                    "observation_type": AgentObservationType.CARD_KNOWLEDGE.value,
                     "seed": seed,
                 }
             )
@@ -38,7 +38,11 @@ class PPOEnv:
 
         self.players = players
         self.num_actions = self._game.max_moves()
-        self.enc_size = self._encoder.shape()[0]
+        self.enc_type = encoding_type
+        if self.enc_type == "prev_action":
+            self.enc_size = self.num_actions + self._encoder.shape()[0]
+        else:  # self.enc_type == "card_knowledge"
+            self.enc_size = self._encoder.shape()[0]
         self.buf_size = buffer_size
         self.obs_size = self.buf_size * self.enc_size
         self.enc_buffer: deque[np.ndarray] = deque(maxlen=buffer_size)
@@ -54,6 +58,7 @@ class PPOEnv:
         self.score = self._state.score()
         self.cur_player = self._state.cur_player()
         self.illegal_mask = self._make_illegal_mask()
+        self.prev_action = self._make_prev_action(None)
         for _ in range(self.buf_size - 1):
             self.enc_buffer.append(np.zeros((self.players, self.enc_size), dtype=int))
         self.enc_buffer.append(self._make_all_encodings())
@@ -75,6 +80,7 @@ class PPOEnv:
         self.score = new_score
         self.cur_player = self._state.cur_player()
         self.illegal_mask = self._make_illegal_mask()
+        self.prev_action = self._make_prev_action(action)
         self.enc_buffer.append(self._make_all_encodings())
 
         is_terminal = self._state.is_terminal()
@@ -88,7 +94,16 @@ class PPOEnv:
             return np.concatenate([obs[player] for obs in self.enc_buffer])
 
     def _encoding(self, player: int):
-        return np.array(self._encoder.encode(self._state.observation(player)))
+        enc = np.array(self._encoder.encode(self._state.observation(player)))
+        if self.enc_type == "prev_action":
+            enc = np.concatenate([self.prev_action, enc])
+        return enc
+
+    def _make_prev_action(self, action: int = None):
+        prev_action = np.zeros(self.num_actions, dtype=int)
+        if action is not None:
+            prev_action[action] = 1
+        return prev_action
 
     def _make_all_encodings(self):
         all_obs = np.stack([self._encoding(p) for p in range(self.players)])

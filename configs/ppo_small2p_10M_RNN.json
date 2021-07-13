@@ -4,7 +4,7 @@
   "env_config": {
     "preset": "small",
     "players": 2,
-    "enc_type": "NOT USED",
+    "encoding_type": "prev_action",
     "buffer_size": 1
   },
   "agent_config": {
@@ -28,14 +28,14 @@
   },
   "train_config": {
     "epochs": 10,
-    "batch_size": 1024,
+    "batch_size": 256,
     "policy_optimizer": {
-      "lr": 1e-3,
+      "lr": 5e-4,
       "weight_decay": 1e-6
     },
     "value_fn_optimizer": {
-      "lr": 1e-3,
-      "weight_decay": 1e-5
+      "lr": 5e-4,
+      "weight_decay": 1e-6
     },
     "ppo_clip": 0.2,
     "entropy_coeff": 0.01

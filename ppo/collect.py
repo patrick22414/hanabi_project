@@ -100,9 +100,8 @@ def _collect_frames(
 
         gae_start = perf_counter()
         frames = _gae_frames(frames, gae_gamma, gae_lambda)
-        gae_time_cost += perf_counter() - gae_start
-
         collection.extend(frames)
+        gae_time_cost += perf_counter() - gae_start
 
     log_collect.info(f"Collection size: {len(collection)} frames")
     log_collect.info(
@@ -189,7 +188,9 @@ def _collect_trajectories(
             collection.append(_gae_traj(t, p, players, gae_gamma, gae_lambda))
         gae_time_cost += perf_counter() - gae_start
 
-    log_collect.info(f"Collection size: {len(collection)} trajectories")
+    log_collect.info(
+        f"Collection size: {len(collection)} trajectories including {total_steps} steps"
+    )
     log_collect.info(
         f"Collection done in {perf_counter() - start:.2f} s, in which GAE cost {gae_time_cost:.2f} s"
     )
@@ -261,8 +262,9 @@ def _gae_traj(
         emprets[t] = torch.sum(gammaexp[: length - t] * rewards[t:])
         advantages[t] = torch.sum(glexp[: length - t] * deltas[t:])  # TODO: check math
 
-    observations_all = torch.stack(traj.observations)
-    observations = observations_all[player_id::players]
+    observations = torch.stack(traj.observations)
+    action_mask = torch.zeros(len(observations), dtype=torch.bool)
+    action_mask[player_id::players] = True
     illegal_mask = torch.stack(traj.illegal_mask)
     action_logps = torch.stack(traj.action_logps)
     actions = torch.stack(traj.actions)
@@ -270,10 +272,10 @@ def _gae_traj(
 
     return Trajectory(
         observations=observations,
+        action_mask=action_mask,
         illegal_mask=illegal_mask,
         action_logps=action_logps,
         actions=actions,
         advantages=advantages,
-        observations_all=observations_all,
         emprets=emprets,
     )
