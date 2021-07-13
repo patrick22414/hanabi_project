@@ -1,19 +1,9 @@
 from typing import Callable, Union
+
 import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.nn.utils.rnn import PackedSequence
-
-
-class PPOAgent(nn.Module):
-    policy: nn.Module
-    value_fn: nn.Module
-
-    def __init__(self, policy, value_fn):
-        super().__init__()
-
-        self.add_module("policy", policy)
-        self.add_module("value_fn", value_fn)
 
 
 class RNNPolicy(nn.Module):
@@ -21,43 +11,46 @@ class RNNPolicy(nn.Module):
         super().__init__()
 
         self.policy_pre = _linear_tanh(input_size, hidden_size)
-        self.policy_rnn = nn.GRU(hidden_size, hidden_size)
+        self.policy_rnn = nn.GRU(hidden_size, hidden_size, num_layers=num_layers)
         self.policy_post = _linear_tanh(hidden_size, output_size, tanh=False)
 
         self.num_layers = num_layers
         self.hidden_size = hidden_size
 
-    def forward(self, x, illegal_mask=None, h_0=None, return_logits=False):
-        if isinstance(x, PackedSequence):
-            # `PackedSequence`s are used for training, representing a batch of full trajectories
-            assert h_0 is None
-            h_0 = torch.zeros(
-                self.num_layers,
-                len(x.sorted_indices),
-                self.hidden_size,
-                device=x.data.device,
-            )
+    def new_memory(self, batch_size: int):
+        return torch.zeros(self.num_layers, batch_size, self.hidden_size)
 
-            # x.data: [sum(L*), input_size]
+    def forward(
+        self, x: Union[torch.Tensor, PackedSequence], illegal_mask=None, h_0=None
+    ):
+        if self.training:
+            # `PackedSequence`s are used for training
+            assert isinstance(x, PackedSequence)
+
+            if h_0 is None:
+                h_0 = self.new_memory(len(x.sorted_indices))
+
             x = _apply_to_packed_sequence(self.policy_pre, x)
-            logits, h_0 = self.policy_rnn(x, h_0)
+            logits, h_t = self.policy_rnn(x, h_0)
             logits = _apply_to_packed_sequence(self.policy_post, logits)
-            # logits.data: [sum(L*), output_size]
+
+            return logits, h_t
 
         else:
             assert h_0 is not None
+            assert isinstance(x, torch.Tensor)
 
-            # x: [L_seq, N_batch, input_size]
             x = self.policy_pre(x)
-            logits, h_0 = self.policy_rnn(x, h_0)
-            logits = self.policy_post(logits)
-            # y: [L_seq, N_batch, output_size]
+            logits, h_t = self.policy_rnn(x, h_0)
 
-        if return_logits:
-            return logits, h_0
-        else:
-            action, action_logp = _action_sampling(logits, illegal_mask)
-            return action, action_logp, h_0
+            if illegal_mask is not None:
+                logits = self.policy_post(logits)
+
+                # sample actions from the last output
+                action, action_logp = _action_sampling(logits[-1], illegal_mask)
+                return action, action_logp, h_t
+            else:
+                return h_t
 
 
 class MLPPolicy(nn.Module):
@@ -75,9 +68,13 @@ class MLPPolicy(nn.Module):
         for p in self.layers[-1].parameters():
             torch.nn.init.zeros_(p)
 
-    def forward(self, x, illegal_mask):
+    def forward(self, x: torch.Tensor, illegal_mask=None):
         logits = self.layers(x)
-        return _action_sampling(logits, illegal_mask)
+
+        if self.training:
+            return logits
+        else:
+            return _action_sampling(logits, illegal_mask)
 
 
 class MLPValueFn(nn.Module):
@@ -100,6 +97,17 @@ class MLPValueFn(nn.Module):
         return value
 
 
+class PPOAgent(nn.Module):
+    policy: Union[MLPPolicy, RNNPolicy]
+    value_fn: MLPValueFn
+
+    def __init__(self, policy, value_fn):
+        super().__init__()
+
+        self.add_module("policy", policy)
+        self.add_module("value_fn", value_fn)
+
+
 def _linear_tanh(input_size, output_size, tanh=True):
     return nn.Sequential(
         nn.Linear(input_size, output_size),
@@ -108,6 +116,9 @@ def _linear_tanh(input_size, output_size, tanh=True):
 
 
 def _apply_to_packed_sequence(fn: Callable, ps: PackedSequence):
+    """Apply a function to the `data` in a PackedSequence, circumventing the
+    non-assignability of NamedTuple
+    """
     return PackedSequence(
         fn(ps.data), ps.batch_sizes, ps.sorted_indices, ps.unsorted_indices
     )
@@ -117,7 +128,7 @@ def _action_sampling(
     logits: Union[torch.Tensor, PackedSequence], illegal_mask: torch.BoolTensor
 ):
     """
-    logits: [*, num_actions]
+    logits: [batch_size, num_actions] or [num_actions]
     illegal_mask: same as logits
     """
     if isinstance(logits, PackedSequence):

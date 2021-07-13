@@ -11,61 +11,10 @@ from ppo.agent import MLPPolicy, MLPValueFn, PPOAgent, RNNPolicy
 from ppo.collect import collect
 from ppo.data import FrameBatch, TrajectoryBatch
 from ppo.env import PPOEnv
+from ppo.eval import evaluate
 from ppo.log import log_eval, log_main
 from ppo.train import train
 from ppo.utils import action_histogram
-
-
-@torch.no_grad()
-def evaluate(env, agent, episodes=100, device="cpu"):
-    all_lengths = []
-    all_rewards = []
-    all_actions = []
-    all_entropy = []
-
-    for _ in range(episodes):
-        env.reset()
-
-        is_terminal = False
-        episode_length = 0
-        episode_reward = 0.0
-
-        while not is_terminal:
-            obs = torch.tensor(env.observation, dtype=torch.float, device=device)
-            legal_moves = env.legal_moves
-
-            logits = agent.policy_fn(obs)
-
-            ent_logps = F.log_softmax(logits, dim=-1)
-            all_entropy.append(-torch.sum(ent_logps.exp() * ent_logps).item())
-
-            logits = logits[legal_moves]
-            logp = F.log_softmax(logits, dim=-1)
-            prob = torch.exp(logp)
-
-            action = torch.multinomial(prob, 1).item()
-            action = legal_moves[action]
-
-            _, reward, is_terminal = env.step(action)  # discarding obs_t1
-
-            episode_length += 1
-            episode_reward += reward
-            all_actions.append(env.get_move(action).type().name)
-
-        all_lengths.append(episode_length)
-        all_rewards.append(episode_reward)
-
-    avg_length = np.mean(all_lengths)
-    avg_reward = np.mean(all_rewards)
-    avg_entropy = np.mean(all_entropy)
-    action_hist = "\n" + action_histogram(all_actions)
-
-    log_eval.info(
-        f"avg_length={avg_length:.2f}, "
-        f"avg_reward={avg_reward:.2f}, "
-        f"avg_entropy={avg_entropy:.4f}, "
-        f"action_histogram={action_hist}"
-    )
 
 
 def main(
@@ -79,35 +28,35 @@ def main(
 ):
     env = PPOEnv(**env_config, seed=seed)
 
+    collection_type = collect_config["collection_type"]
+
     if agent_config["policy"]["type"] == "RNN":
-        input_size = env.players * env.enc_size
-        output_size = env.num_actions
         policy_cls = RNNPolicy
     elif agent_config["policy"]["type"] == "MLP":
-        input_size = env.enc_size
-        output_size = env.num_actions
         policy_cls = MLPPolicy
     else:
-        raise TypeError
+        raise ValueError
 
     if agent_config["value_fn"]["type"] == "MLP":
         value_fn_cls = MLPValueFn
     else:
-        raise TypeError
+        raise ValueError
 
     agent = PPOAgent(
         policy_cls(
-            input_size,
-            output_size,
+            env.obs_size,
+            env.num_actions,
             agent_config["policy"]["hidden_size"],
             agent_config["policy"]["num_layers"],
         ),
         value_fn_cls(
-            input_size,
+            env.obs_size,
             agent_config["value_fn"]["hidden_size"],
             agent_config["value_fn"]["num_layers"],
         ),
     )
+
+    log_main.info(f"Agent:\n{agent}")
 
     policy_optimizer = torch.optim.Adam(
         agent.policy.parameters(), **train_config["policy_optimizer"]
@@ -119,11 +68,10 @@ def main(
     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(policy_optimizer)
     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(value_fn_optimizer)
 
-    collection_type = collect_config["collection_type"]
-
-    for i in range(iterations):
+    for i in range(1, iterations + 1):
         log_main.info(f"====== Iteration {i}/{iterations} ======")
 
+        agent.eval()
         collection = collect(env=env, agent=agent, **collect_config)
 
         dataloader = DataLoader(
@@ -133,6 +81,7 @@ def main(
             collate_fn=TrajectoryBatch if collection_type == "traj" else FrameBatch,
         )
 
+        agent.train()
         train(
             dataloader,
             agent,
@@ -143,10 +92,15 @@ def main(
             epochs=train_config["epochs"],
         )
 
+        if i % eval_config["eval_every"] == 0:
+            agent.eval()
+            evaluate(collection_type, env, agent, eval_config["episodes"])
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", type=str, required=True)
+    parser.add_argument("-l", "--log-file", type=str)
 
     args = parser.parse_args()
 

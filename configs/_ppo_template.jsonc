@@ -4,7 +4,7 @@
     "env_config": {
         "preset": "full", // "full" | "small"
         "players": 2,
-        "obs_type": "card_knowledge" // "minimal" | "card_knowledge" | "prev_action" | "both"
+        "enc_type": "CARD_KNOW" // "CARD_KNOW" | "PREV_ACT+CARD_KNOW" | "PREV_ACT+MINIMAL"
     },
     "agent_config": {
         "policy": {
@@ -19,8 +19,8 @@
         }
     },
     "collect_config": {
-        "collection_type": "traj", // "frame" | "seg n" | "traj"; n is the seg length
-        "collection_size": 1000, // num of frames/segs/trajs collected
+        "collection_type": "traj cat", // "frame single" | "frame multi" | "traj cat" | "traj acc"
+        "collection_size": 1000, // num of *step* collected
         "collect_workers": 5, // NOT USED!
         "gae_gamma": 0.99,
         "gae_lambda": 0.95

@@ -41,18 +41,16 @@ class FrameBatch:
 # Turn-based trajectory
 @dataclass
 class Trajectory:
-    observations: torch.Tensor  # [L, num_player * enc_size]
-    illegal_mask: torch.BoolTensor  # [L, num_actions]
-    action_logps: torch.Tensor  # [L, 1]
-    actions: torch.LongTensor  # [L, 1]
-    rewards: torch.Tensor  # [L]
-    values: torch.Tensor  # [L]
-    values_t1: torch.Tensor  # [L]
-    emprets: torch.Tensor = None  # [L]
-    advantages: torch.Tensor = None  # [L]
-
-    def __len__(self):
-        return len(self.observations)
+    observations: torch.Tensor  # [LT, enc_size]
+    illegal_mask: torch.BoolTensor  # [LT, num_actions]
+    action_logps: torch.Tensor  # [LT, 1]
+    actions: torch.LongTensor  # [LT, 1]
+    advantages: torch.Tensor  # [LT]
+    # rewards: torch.Tensor  # [L]
+    # values: torch.Tensor  # [L]
+    # values_t1: torch.Tensor  # [L]
+    observations_all: torch.Tensor  # [L, enc_size]
+    emprets: torch.Tensor  # [L]
 
 
 class TrajectoryBatch:
@@ -64,8 +62,10 @@ class TrajectoryBatch:
         # reorder trajs according to their order in PackedSequence
         trajs = [trajs[i] for i in self.observations.sorted_indices]
 
-        self.illegal_mask = torch.cat([t.illegal_mask for t in trajs])  # [sum(L*), ...]
-        self.action_logps = torch.cat([t.action_logps for t in trajs])  # [sum(L*), 1]
-        self.actions = torch.cat([t.actions for t in trajs])  # [sum(L*), 1]
-        self.emprets = torch.cat([t.emprets for t in trajs])  # [sum(L*)]
-        self.advantages = torch.cat([t.advantages for t in trajs])  # [sum(L*)]
+        self.illegal_mask = torch.cat([t.illegal_mask for t in trajs])  # [sum(LT), ...]
+        self.action_logps = torch.cat([t.action_logps for t in trajs])  # [sum(LT), 1]
+        self.actions = torch.cat([t.actions for t in trajs])  # [sum(LT), 1]
+        self.advantages = torch.cat([t.advantages for t in trajs])  # [sum(LT)]
+
+        self.observations_all = torch.cat([t.observations_all for t in trajs])
+        self.emprets = torch.cat([t.emprets for t in trajs])  # [sum(L)]

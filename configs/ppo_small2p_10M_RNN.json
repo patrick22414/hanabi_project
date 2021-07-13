@@ -3,7 +3,9 @@
   "iterations": 1000,
   "env_config": {
     "preset": "small",
-    "players": 2
+    "players": 2,
+    "enc_type": "NOT USED",
+    "buffer_size": 1
   },
   "agent_config": {
     "policy": {
@@ -19,8 +21,8 @@
   },
   "collect_config": {
     "collection_type": "traj",
-    "collection_size": 1000,
-    "collect_workers": 5,
+    "collection_size": 10000,
+    "collect_workers": "NOT USED",
     "gae_gamma": 0.99,
     "gae_lambda": 0.95
   },
@@ -28,7 +30,7 @@
     "epochs": 10,
     "batch_size": 1024,
     "policy_optimizer": {
-      "lr": 5e-4,
+      "lr": 1e-3,
       "weight_decay": 1e-6
     },
     "value_fn_optimizer": {

@@ -1,3 +1,4 @@
+from time import perf_counter
 from typing import Iterator, Union
 
 import numpy as np
@@ -5,7 +6,7 @@ import torch
 from torch.nn import functional as F
 
 from ppo.agent import PPOAgent, RNNPolicy
-from ppo.data import TrajectoryBatch, FrameBatch
+from ppo.data import FrameBatch, TrajectoryBatch
 from ppo.log import log_train
 
 
@@ -18,6 +19,7 @@ def train(
     entropy_coeff: float,
     epochs: int,
 ):
+    start = perf_counter()
     is_rnn = isinstance(agent.policy, RNNPolicy)
 
     for i_epoch in range(1, epochs + 1):
@@ -32,11 +34,12 @@ def train(
             policy_optimizer.zero_grad()
 
             if is_rnn:
-                logits, _ = agent.policy(batch.observations, return_logits=True)
+                logits, _ = agent.policy(batch.observations)
+                logits = logits.data.masked_fill(batch.illegal_mask, float("-inf"))
             else:
                 logits = agent.policy(batch.observations)
+                logits = logits.masked_fill(batch.illegal_mask, float("-inf"))
 
-            logits = logits.data.masked_fill(batch.illegal_mask, float("-inf"))
             logps = F.log_softmax(logits, dim=-1)
 
             # loss_ent is actually (coeff * -entropy), since we want to max entropy
@@ -56,7 +59,7 @@ def train(
             value_fn_optimizer.zero_grad()
 
             if is_rnn:
-                values = agent.value_fn(batch.observations.data)
+                values = agent.value_fn(batch.observations_all)
             else:
                 values = agent.value_fn(batch.observations)
             loss_vf = F.smooth_l1_loss(values, batch.emprets)
@@ -78,3 +81,5 @@ def train(
             f"loss_ent={avg_loss_ent:.4f}, "
             f"loss_vf={avg_loss_vf:.4f}"
         )
+
+    log_train.info(f"Training done in {perf_counter() - start:.2f} s")
