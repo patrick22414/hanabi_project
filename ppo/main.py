@@ -56,7 +56,7 @@ def main(
         ),
     )
 
-    log_main.info(f"Agent:\n{agent}")
+    # log_main.info(f"Agent:\n{agent}")
 
     policy_optimizer = torch.optim.Adam(
         agent.policy.parameters(), **train_config["policy_optimizer"]
@@ -75,6 +75,10 @@ def main(
         T_max=iterations,
         eta_min=train_config["value_fn_optimizer"]["lr"] / 10,
     )
+
+    log_main.info("Initial evaluation")
+    agent.eval()
+    evaluate(collection_type, env, agent, eval_config["episodes"])
 
     for i in range(1, iterations + 1):
         log_main.info(f"====== Iteration {i}/{iterations} ======")

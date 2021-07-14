@@ -1,36 +1,36 @@
 {
   "seed": -1,
-  "iterations": 1000,
+  "iterations": 10000,
   "env_config": {
-    "preset": "small",
+    "preset": "full",
     "players": 2,
     "encoding_type": "card_knowledge",
     "buffer_size": 1
   },
   "agent_config": {
     "policy": {
-      "type": "RNN",
-      "hidden_size": 256,
-      "num_layers": 1
+      "type": "MLP",
+      "hidden_size": 512,
+      "num_layers": 2
     },
     "value_fn": {
       "type": "MLP",
-      "hidden_size": 256,
+      "hidden_size": 512,
       "num_layers": 2
     }
   },
   "collect_config": {
-    "collection_type": "traj",
+    "collection_type": "frame",
     "collection_size": 10000,
     "collect_workers": "NOT USED",
     "gae_gamma": 0.99,
     "gae_lambda": 0.95
   },
   "train_config": {
-    "epochs": 5,
-    "batch_size": 256,
+    "epochs": 10,
+    "batch_size": 1024,
     "policy_optimizer": {
-      "lr": 1e-2,
+      "lr": 5e-4,
       "weight_decay": 1e-6
     },
     "value_fn_optimizer": {

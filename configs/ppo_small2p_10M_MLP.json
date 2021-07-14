@@ -30,12 +30,12 @@
     "epochs": 10,
     "batch_size": 1024,
     "policy_optimizer": {
-      "lr": 1e-3,
-      "weight_decay": 1e-5
+      "lr": 5e-4,
+      "weight_decay": 1e-6
     },
     "value_fn_optimizer": {
       "lr": 1e-3,
-      "weight_decay": 1e-5
+      "weight_decay": 1e-6
     },
     "ppo_clip": 0.2,
     "entropy_coeff": 0.01
