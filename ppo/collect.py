@@ -14,28 +14,25 @@ from ppo.log import log_collect
 def collect(
     collection_type: str,
     collection_size: int,
-    collect_workers: int,  # NOT USED!
-    env: PPOEnv,
+    parallel: int,
+    env_or_envs: Union[PPOEnv, List[PPOEnv]],
     agent: PPOAgent,
     gae_gamma: float,
     gae_lambda: float,
 ):
     if collection_type == "frame":
-        return _collect_frames(
-            collection_size,
-            env,
-            agent,
-            gae_gamma,
-            gae_lambda,
-        )
+        if parallel > 1:
+            return _parallel_collect_frames(
+                collection_size, env_or_envs, agent, gae_gamma, gae_lambda
+            )
+        else:
+            return _collect_frames(
+                collection_size, env_or_envs, agent, gae_gamma, gae_lambda
+            )
 
     elif collection_type == "traj":
         return _collect_trajectories(
-            collection_size,
-            env,
-            agent,
-            gae_gamma,
-            gae_lambda,
+            collection_size, env_or_envs, agent, gae_gamma, gae_lambda
         )
 
     else:
@@ -43,7 +40,7 @@ def collect(
 
 
 def _collect_frames(
-    max_step: int,
+    collection_size: int,
     env: PPOEnv,
     agent: PPOAgent,
     gae_gamma: float,
@@ -52,13 +49,12 @@ def _collect_frames(
     assert isinstance(agent.policy, MLPPolicy)
 
     collection: List[Frame] = []
-    total_steps = 0
     total_entropy = 0.0
 
     gae_time_cost = 0.0
     start = perf_counter()
 
-    while total_steps < max_step:
+    while len(collection) < collection_size:
         frames = []
 
         env.reset()
@@ -98,17 +94,85 @@ def _collect_frames(
                 )
             )
 
-            total_steps += 1
-
         gae_start = perf_counter()
         frames = _gae_frames(frames, gae_gamma, gae_lambda)
         collection.extend(frames)
         gae_time_cost += perf_counter() - gae_start
 
     log_collect.info(f"Collection size: {len(collection)} frames")
-    log_collect.info(f"Collection avg_entropy: {total_entropy / total_steps:.4f}")
+    log_collect.info(f"Collection avg_entropy: {total_entropy / len(collection):.4f}")
     log_collect.info(
         f"Collection done in {perf_counter() - start:.2f} s, in which GAE cost {gae_time_cost:.2f} s"
+    )
+
+    return collection
+
+
+def _parallel_collect_frames(
+    collection_size: int,
+    envs: List[PPOEnv],
+    agent: PPOAgent,
+    gae_gamma: float,
+    gae_lambda: float,
+):
+    collection: List[Frame] = []
+
+    frames: List[List[Frame]] = [[] for _ in envs]
+    is_terminal_list = [True] * len(envs)
+
+    gae_time_cost = 0.0
+    start = perf_counter()
+
+    while len(collection) < collection_size:
+        for it, env in zip(is_terminal_list, envs):
+            if it:
+                env.reset()
+
+        cur_players = [env.cur_player for env in envs]
+
+        obs = torch.stack(
+            [
+                torch.tensor(env.observation(p), dtype=torch.float)
+                for p, env in zip(cur_players, envs)
+            ]
+        )
+        illegal_mask = torch.stack([torch.tensor(env.illegal_mask) for env in envs])
+
+        actions, action_logps, ents = agent.policy(obs, illegal_mask)
+        rewards, is_terminal_list = tuple(
+            zip(*[env.step(a.item()) for a, env in zip(actions, envs)])
+        )
+
+        values = agent.value_fn(obs)
+        values_t1 = torch.zeros_like(values)
+        for i, it in enumerate(is_terminal_list):
+            if not it:
+                obs_t1 = obs.new_tensor(envs[i].observation(cur_players[i]))
+                values_t1[i] = agent.value_fn(obs_t1)
+
+        for i, fs in enumerate(frames):
+            fs.append(
+                Frame(
+                    observation=obs[i],
+                    illegal_mask=illegal_mask[i],
+                    action_logp=action_logps[i],
+                    action=actions[i],
+                    reward=obs.new_tensor(rewards[i]),
+                    value=values[i],
+                    value_t1=values_t1[i],
+                )
+            )
+
+        for it, fs in zip(is_terminal_list, frames):
+            if it:
+                gae_start = perf_counter()
+                collection.extend(_gae_frames(fs, gae_gamma, gae_lambda))
+                fs.clear()
+                gae_time_cost += perf_counter() - gae_start
+
+    log_collect.info(f"Collection size: {len(collection)} frames")
+    log_collect.info(
+        f"Parallel collection done in {perf_counter() - start:.2f} s, in which GAE cost {gae_time_cost:.2f} s"
     )
 
     return collection

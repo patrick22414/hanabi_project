@@ -29,6 +29,10 @@ def main(
     env = PPOEnv(**env_config, seed=seed)
 
     collection_type = collect_config["collection_type"]
+    parallel = collect_config["parallel"]
+
+    if parallel > 1:
+        envs = [PPOEnv(**env_config, seed=seed + i) for i in range(parallel)]
 
     if agent_config["policy"]["type"] == "RNN":
         policy_cls = RNNPolicy
@@ -84,7 +88,10 @@ def main(
         log_main.info(f"====== Iteration {i}/{iterations} ======")
 
         agent.eval()
-        collection = collect(env=env, agent=agent, **collect_config)
+        if parallel > 1:
+            collection = collect(env_or_envs=envs, agent=agent, **collect_config)
+        else:
+            collection = collect(env_or_envs=env, agent=agent, **collect_config)
 
         dataloader = DataLoader(
             collection,

@@ -22,7 +22,7 @@
   "collect_config": {
     "collection_type": "traj",
     "collection_size": 10000,
-    "collect_workers": "NOT USED",
+    "parallel": 1,
     "gae_gamma": 0.99,
     "gae_lambda": 0.95
   },
