@@ -71,13 +71,17 @@ class MLPPolicy(nn.Module):
         # for p in self.parameters():
         #     torch.nn.init.normal_(p, 1e-6)
 
-    def forward(self, x: torch.Tensor, illegal_mask=None):
+    def forward(self, x: torch.Tensor, illegal_mask=None, exploit=False):
         logits = self.layers(x)
 
         if self.training:
             return logits
         else:
-            return _action_sampling(logits, illegal_mask)
+            if exploit:
+                logits[illegal_mask] = float("-inf")
+                return torch.argmax(logits, dim=-1, keepdim=True)
+            else:
+                return _action_sampling(logits, illegal_mask)
 
 
 class MLPValueFn(nn.Module):

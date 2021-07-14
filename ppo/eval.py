@@ -37,6 +37,7 @@ def _evaluate_frames(env: PPOEnv, agent: PPOAgent, episodes=100):
 
             # action selection
             action, action_logp, entropy = agent.policy(obs, illegal_mask)
+            action = agent.policy(obs, illegal_mask, exploit=True)
 
             reward, is_terminal = env.step(action.item())
 
