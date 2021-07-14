@@ -4,7 +4,7 @@
   "env_config": {
     "preset": "small",
     "players": 2,
-    "encoding_type": "prev_action",
+    "encoding_type": "card_knowledge",
     "buffer_size": 1
   },
   "agent_config": {

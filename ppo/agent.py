@@ -14,6 +14,9 @@ class RNNPolicy(nn.Module):
         self.policy_rnn = nn.GRU(hidden_size, hidden_size, num_layers=num_layers)
         self.policy_post = _linear_tanh(hidden_size, output_size, tanh=False)
 
+        for p in self.policy_post.parameters():
+            torch.nn.init.normal_(p, std=1e-3)
+
         self.num_layers = num_layers
         self.hidden_size = hidden_size
 
@@ -66,7 +69,7 @@ class MLPPolicy(nn.Module):
         )
 
         for p in self.layers[-1].parameters():
-            torch.nn.init.zeros_(p)
+            torch.nn.init.normal_(p, 1e-3)
 
     def forward(self, x: torch.Tensor, illegal_mask=None):
         logits = self.layers(x)
@@ -89,8 +92,8 @@ class MLPValueFn(nn.Module):
             _linear_tanh(hidden_size, 1, tanh=False),
         )
 
-        for p in self.layers[-1].parameters():
-            torch.nn.init.zeros_(p)
+        # for p in self.layers[-1].parameters():
+        #     torch.nn.init.zeros_(p)
 
     def forward(self, x):
         value = self.layers(x).squeeze()

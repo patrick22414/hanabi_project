@@ -4,7 +4,7 @@
   "env_config": {
     "preset": "small",
     "players": 2,
-    "encoding_type": "prev_action",
+    "encoding_type": "card_knowledge",
     "buffer_size": 1
   },
   "agent_config": {
@@ -30,8 +30,8 @@
     "epochs": 10,
     "batch_size": 1024,
     "policy_optimizer": {
-      "lr": 5e-4,
-      "weight_decay": 1e-6
+      "lr": 1e-3,
+      "weight_decay": 1e-5
     },
     "value_fn_optimizer": {
       "lr": 1e-3,

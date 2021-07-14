@@ -262,6 +262,8 @@ def _gae_traj(
         emprets[t] = torch.sum(gammaexp[: length - t] * rewards[t:])
         advantages[t] = torch.sum(glexp[: length - t] * deltas[t:])  # TODO: check math
 
+    # __import__("ipdb").set_trace()
+
     observations = torch.stack(traj.observations)
     action_mask = torch.zeros(len(observations), dtype=torch.bool)
     action_mask[player_id::players] = True

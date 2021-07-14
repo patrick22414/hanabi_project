@@ -65,8 +65,16 @@ def main(
         agent.value_fn.parameters(), **train_config["value_fn_optimizer"]
     )
 
-    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(policy_optimizer)
-    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(value_fn_optimizer)
+    policy_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        policy_optimizer,
+        T_max=iterations,
+        eta_min=train_config["policy_optimizer"]["lr"] / 10,
+    )
+    value_fn_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        value_fn_optimizer,
+        T_max=iterations,
+        eta_min=train_config["value_fn_optimizer"]["lr"] / 10,
+    )
 
     for i in range(1, iterations + 1):
         log_main.info(f"====== Iteration {i}/{iterations} ======")
@@ -91,6 +99,9 @@ def main(
             entropy_coeff=train_config["entropy_coeff"],
             epochs=train_config["epochs"],
         )
+
+        policy_scheduler.step()
+        value_fn_scheduler.step()
 
         if i % eval_config["eval_every"] == 0:
             agent.eval()

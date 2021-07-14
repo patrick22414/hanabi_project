@@ -28,7 +28,7 @@ class PPOEnv:
                     "players": players,
                     "colors": 2,
                     "rank": 5,
-                    "hand_size": 3,
+                    "hand_size": 2,
                     "max_information_tokens": 5,
                     "max_life_tokens": 3,
                     "seed": seed,
