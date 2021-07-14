@@ -1,6 +1,6 @@
 {
   "seed": -1,
-  "iterations": 5000,
+  "iterations": 10000,
   "env_config": {
     "preset": "full",
     "players": 2,
@@ -21,7 +21,7 @@
   },
   "collect_config": {
     "collection_type": "frame",
-    "collection_size": 20000,
+    "collection_size": 10000,
     "collect_workers": "NOT USED",
     "gae_gamma": 0.99,
     "gae_lambda": 0.95
@@ -30,7 +30,7 @@
     "epochs": 5,
     "batch_size": 1024,
     "policy_optimizer": {
-      "lr": 2e-4,
+      "lr": 5e-4,
       "weight_decay": 1e-6
     },
     "value_fn_optimizer": {
@@ -38,7 +38,7 @@
       "weight_decay": 1e-6
     },
     "ppo_clip": 0.2,
-    "entropy_coeff": 0.05
+    "entropy_coeff": 0.0
   },
   "eval_config": {
     "eval_every": 1,
