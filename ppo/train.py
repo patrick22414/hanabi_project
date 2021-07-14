@@ -19,6 +19,8 @@ def train(
     entropy_coeff: float,
     epochs: int,
 ):
+    update_policy_cost = 0.0
+    update_value_fn_cost = 0.0
     start = perf_counter()
     is_rnn = isinstance(agent.policy, RNNPolicy)
 
@@ -31,6 +33,7 @@ def train(
             # batch = batch.to(device)
 
             # update RNN policy
+            update_policy_start = perf_counter()
             policy_optimizer.zero_grad()
 
             if is_rnn:
@@ -43,9 +46,10 @@ def train(
 
             logps = F.log_softmax(logits, dim=-1)
 
-            # loss_ent is actually (coeff * -entropy), since we want to max entropy
-            loss_ent = logps.exp() * logps.masked_fill(batch.illegal_mask, 0.0)
-            loss_ent = entropy_coeff * torch.mean(torch.sum(loss_ent, dim=-1))
+            if entropy_coeff != 0:
+                # loss_ent is actually (coeff * -entropy), since we want to max entropy
+                loss_ent = logps.exp() * logps.masked_fill(batch.illegal_mask, 0.0)
+                loss_ent = entropy_coeff * torch.mean(torch.sum(loss_ent, dim=-1))
 
             action_logps = torch.gather(logps, dim=1, index=batch.actions)
             ratio = torch.exp(action_logps - batch.action_logps).squeeze()
@@ -53,10 +57,16 @@ def train(
             surr_2 = torch.clip(ratio, 1 - ppo_clip, 1 + ppo_clip) * batch.advantages
             loss_ppo = -torch.mean(torch.minimum(surr_1, surr_2))
 
-            (loss_ppo + loss_ent).backward()
+            if entropy_coeff != 0:
+                (loss_ppo + loss_ent).backward()
+            else:
+                loss_ppo.backward()
             policy_optimizer.step()
 
+            update_policy_cost += perf_counter() - update_policy_start
+
             # update value function
+            update_value_fn_start = perf_counter()
             value_fn_optimizer.zero_grad()
 
             if is_rnn:
@@ -68,12 +78,15 @@ def train(
             loss_vf.backward()
             value_fn_optimizer.step()
 
+            update_value_fn_cost += perf_counter() - update_value_fn_start
+
             losses_ppo.append(loss_ppo.item())
-            losses_ent.append(loss_ent.item())
+            if entropy_coeff != 0:
+                losses_ent.append(loss_ent.item())
             losses_vf.append(loss_vf.item())
 
         avg_loss_ppo = np.mean(losses_ppo)
-        avg_loss_ent = np.mean(losses_ent)
+        avg_loss_ent = np.mean(losses_ent) if entropy_coeff != 0 else 0
         avg_loss_vf = np.mean(losses_vf)
 
         log_train.info(
@@ -83,4 +96,8 @@ def train(
             f"loss_vf={avg_loss_vf:.4f}"
         )
 
-    log_train.info(f"Training done in {perf_counter() - start:.2f} s")
+    log_train.info(
+        f"Training done in {perf_counter() - start:.2f} s "
+        f"(policy {update_policy_cost:.2f} s, "
+        f"value_fn {update_value_fn_cost:.2f} s)"
+    )

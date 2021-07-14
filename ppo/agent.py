@@ -14,8 +14,8 @@ class RNNPolicy(nn.Module):
         self.policy_rnn = nn.GRU(hidden_size, hidden_size, num_layers=num_layers)
         self.policy_post = _linear_tanh(hidden_size, output_size, tanh=False)
 
-        for p in self.parameters():
-            torch.nn.init.normal_(p, std=1e-6)
+        # for p in self.parameters():
+        #     torch.nn.init.normal_(p, std=1e-6)
 
         self.num_layers = num_layers
         self.hidden_size = hidden_size
@@ -50,8 +50,8 @@ class RNNPolicy(nn.Module):
                 logits = self.policy_post(logits)
 
                 # sample actions from the last output
-                action, action_logp = _action_sampling(logits[-1], illegal_mask)
-                return action, action_logp, h_t
+                action, action_logp, ent = _action_sampling(logits[-1], illegal_mask)
+                return action, action_logp, ent, h_t
             else:
                 return h_t
 
@@ -68,8 +68,8 @@ class MLPPolicy(nn.Module):
             _linear_tanh(hidden_size, output_size, tanh=False),
         )
 
-        for p in self.parameters():
-            torch.nn.init.normal_(p, 1e-6)
+        # for p in self.parameters():
+        #     torch.nn.init.normal_(p, 1e-6)
 
     def forward(self, x: torch.Tensor, illegal_mask=None):
         logits = self.layers(x)
@@ -92,8 +92,8 @@ class MLPValueFn(nn.Module):
             _linear_tanh(hidden_size, 1, tanh=False),
         )
 
-        for p in self.parameters():
-            torch.nn.init.normal_(p, std=1e-6)
+        # for p in self.parameters():
+        #     torch.nn.init.normal_(p, std=1e-6)
 
     def forward(self, x):
         value = self.layers(x).squeeze()
@@ -127,16 +127,11 @@ def _apply_to_packed_sequence(fn: Callable, ps: PackedSequence):
     )
 
 
-def _action_sampling(
-    logits: Union[torch.Tensor, PackedSequence], illegal_mask: torch.BoolTensor
-):
+def _action_sampling(logits: torch.Tensor, illegal_mask: torch.BoolTensor):
     """
     logits: [batch_size, num_actions] or [num_actions]
     illegal_mask: same as logits
     """
-    if isinstance(logits, PackedSequence):
-        raise NotImplementedError
-
     logits[illegal_mask] = float("-inf")
     logp = F.log_softmax(logits, dim=-1)
     prob = torch.exp(logp)
@@ -150,4 +145,7 @@ def _action_sampling(
         action = action.view(*logits.shape[:-1], 1)
     action_logp = torch.gather(logp, dim=-1, index=action)
 
-    return action, action_logp
+    logp[illegal_mask] = 0.0
+    entropy = -torch.sum(prob * logp, dim=-1).mean()
+
+    return action, action_logp, entropy

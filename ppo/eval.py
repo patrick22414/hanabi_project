@@ -21,15 +21,14 @@ def evaluate(collection_type, env, agent, episodes=100):
 def _evaluate_frames(env: PPOEnv, agent: PPOAgent, episodes=100):
     assert not isinstance(agent.policy, RNNPolicy), "Cannot use RNNPolicy with frames"
 
-    all_lengths = []
-    all_rewards = []
+    total_steps = 0
+    total_reward = 0.0
+    total_entropy = 0.0
     all_actions = []
 
     for _ in range(episodes):
         env.reset()
         is_terminal = False
-        episode_length = 0
-        episode_reward = 0.0
 
         while not is_terminal:
             p = env.cur_player
@@ -37,25 +36,25 @@ def _evaluate_frames(env: PPOEnv, agent: PPOAgent, episodes=100):
             illegal_mask = torch.tensor(env.illegal_mask)
 
             # action selection
-            action, action_logp = agent.policy(obs, illegal_mask)
+            action, action_logp, entropy = agent.policy(obs, illegal_mask)
 
             reward, is_terminal = env.step(action.item())
 
-            episode_length += 1
-            episode_reward += reward
-            all_actions.append(env.get_move(action).type().name)
+            total_steps += 1
+            total_reward += reward
+            total_entropy += entropy.item()
+            all_actions.append(env.get_move(action.item()).type().name)
 
-        all_lengths.append(episode_length)
-        all_rewards.append(episode_reward)
-
-    avg_length = np.mean(all_lengths)
-    avg_reward = np.mean(all_rewards)
+    avg_length = total_steps / episodes
+    avg_reward = total_reward / episodes
+    avg_entropy = total_entropy / total_steps
     action_hist = "\n" + action_histogram(all_actions)
 
     log_eval.info(
         "Evaluation done: "
         f"avg_length={avg_length:.2f}, "
         f"avg_reward={avg_reward:.2f}, "
+        f"avg_ent={avg_entropy:.2f}, "
         f"action_histogram={action_hist}"
     )
 
@@ -65,14 +64,12 @@ def _evaluate_trajectories(env: PPOEnv, agent: PPOAgent, episodes=100):
 
     players = env.players
 
-    all_lengths = []
-    all_rewards = []
+    total_steps = 0
+    total_reward = 0.0
+    total_entropy = 0.0
     all_actions = []
 
     for _ in range(episodes):
-        episode_length = 0
-        episode_reward = 0.0
-
         # RNN hidden states, one for each player
         memories = [agent.policy.new_memory(1) for _ in range(players)]
 
@@ -89,7 +86,7 @@ def _evaluate_trajectories(env: PPOEnv, agent: PPOAgent, episodes=100):
                 obs = torch.tensor(env.observation(p), dtype=torch.float)
 
                 if p == env.cur_player:
-                    action, _, h_t = agent.policy(
+                    action, action_logp, entropy, h_t = agent.policy(
                         obs.view(1, 1, -1), illegal_mask.view(1, -1), h_0=memories[p]
                     )
                 else:
@@ -102,20 +99,20 @@ def _evaluate_trajectories(env: PPOEnv, agent: PPOAgent, episodes=100):
             # env update
             reward, is_terminal = env.step(action.item())
 
-            episode_length += 1
-            episode_reward += reward
-            all_actions.append(env.get_move(action).type().name)
+            total_steps += 1
+            total_reward += reward
+            total_entropy += entropy.item()
+            all_actions.append(env.get_move(action.item()).type().name)
 
-        all_lengths.append(episode_length)
-        all_rewards.append(episode_reward)
-
-    avg_length = np.mean(all_lengths)
-    avg_reward = np.mean(all_rewards)
+    avg_length = total_steps / episodes
+    avg_reward = total_reward / episodes
+    avg_entropy = total_entropy / total_steps
     action_hist = "\n" + action_histogram(all_actions)
 
     log_eval.info(
         "Evaluation done: "
         f"avg_length={avg_length:.2f}, "
         f"avg_reward={avg_reward:.2f}, "
+        f"avg_ent={avg_entropy:.2f}, "
         f"action_histogram={action_hist}"
     )

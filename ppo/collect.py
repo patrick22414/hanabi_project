@@ -53,6 +53,7 @@ def _collect_frames(
 
     collection: List[Frame] = []
     total_steps = 0
+    total_entropy = 0.0
 
     gae_time_cost = 0.0
     start = perf_counter()
@@ -70,7 +71,8 @@ def _collect_frames(
             illegal_mask = torch.tensor(env.illegal_mask)
 
             # action selection
-            action, action_logp = agent.policy(obs, illegal_mask)
+            action, action_logp, entropy = agent.policy(obs, illegal_mask)
+            total_entropy += entropy.item()
 
             # env update
             reward, is_terminal = env.step(action.item())
@@ -104,6 +106,7 @@ def _collect_frames(
         gae_time_cost += perf_counter() - gae_start
 
     log_collect.info(f"Collection size: {len(collection)} frames")
+    log_collect.info(f"Collection avg_entropy: {total_entropy / total_steps:.4f}")
     log_collect.info(
         f"Collection done in {perf_counter() - start:.2f} s, in which GAE cost {gae_time_cost:.2f} s"
     )
@@ -149,7 +152,7 @@ def _collect_trajectories(
                 trajs[p].observations.append(obs)
 
                 if p == env.cur_player:
-                    action, action_logp, h_t = agent.policy(
+                    action, action_logp, entropy, h_t = agent.policy(
                         obs.view(1, 1, -1),
                         illegal_mask=illegal_mask.view(1, -1),
                         h_0=memories[p],
