@@ -128,12 +128,12 @@ def _parallel_collect_frames(
             if it:
                 env.reset()
 
-        cur_players = [env.cur_player for env in envs]
+        cps = [env.cur_player for env in envs]
 
         obs = torch.stack(
             [
                 torch.tensor(env.observation(p), dtype=torch.float)
-                for p, env in zip(cur_players, envs)
+                for p, env in zip(cps, envs)
             ]
         )
         illegal_mask = torch.stack([torch.tensor(env.illegal_mask) for env in envs])
@@ -144,11 +144,18 @@ def _parallel_collect_frames(
         )
 
         values = agent.value_fn(obs)
-        values_t1 = torch.zeros_like(values)
+        obs_t1 = torch.stack(
+            [
+                torch.tensor(env.observation(p), dtype=torch.float)
+                for p, env in zip(cps, envs)
+            ]
+        )
+        values_t1 = agent.value_fn(obs_t1)
         for i, it in enumerate(is_terminal_list):
-            if not it:
-                obs_t1 = obs.new_tensor(envs[i].observation(cur_players[i]))
-                values_t1[i] = agent.value_fn(obs_t1)
+            if it:
+                values_t1[i] = 0.0
+
+        # __import__("ipdb").set_trace()
 
         for i, fs in enumerate(frames):
             fs.append(
