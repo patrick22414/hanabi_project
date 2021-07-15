@@ -24,6 +24,8 @@ class FrameBatch:
         self.illegal_mask = torch.stack([f.illegal_mask for f in frames])
         self.action_logps = torch.stack([f.action_logp for f in frames])
         self.actions = torch.stack([f.action for f in frames])
+        self.rewards = torch.stack([f.reward for f in frames])
+        self.values_t1 = torch.stack([f.value_t1 for f in frames])
         self.emprets = torch.stack([f.empret for f in frames])
         self.advantages = torch.stack([f.advantage for f in frames])
 
@@ -32,6 +34,8 @@ class FrameBatch:
         self.illegal_mask = self.illegal_mask.to(device)
         self.action_logps = self.action_logps.to(device)
         self.actions = self.actions.to(device)
+        self.rewards = self.rewards.to(device)
+        self.values_t1 = self.values_t1.to(device)
         self.emprets = self.emprets.to(device)
         self.advantages = self.advantages.to(device)
 

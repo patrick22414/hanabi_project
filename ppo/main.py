@@ -2,9 +2,7 @@ import argparse
 import json
 import random
 
-import numpy as np
 import torch
-from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
 from ppo.agent import MLPPolicy, MLPValueFn, PPOAgent, RNNPolicy
@@ -12,9 +10,8 @@ from ppo.collect import collect
 from ppo.data import FrameBatch, TrajectoryBatch
 from ppo.env import PPOEnv
 from ppo.eval import evaluate
-from ppo.log import log_eval, log_main
+from ppo.log import log_main
 from ppo.train import train
-from ppo.utils import action_histogram
 
 
 def main(
@@ -60,7 +57,7 @@ def main(
         ),
     )
 
-    # log_main.info(f"Agent:\n{agent}")
+    log_main.info(f"Observation size: {env.obs_size}. Num actions: {env.num_actions}")
 
     policy_optimizer = torch.optim.Adam(
         agent.policy.parameters(), **train_config["policy_optimizer"]
@@ -107,7 +104,9 @@ def main(
             policy_optimizer,
             value_fn_optimizer,
             ppo_clip=train_config["ppo_clip"],
-            entropy_coeff=train_config["entropy_coeff"],
+            entropy_coef=train_config["entropy_coef"],
+            use_value_iter=train_config.get("use_value_iter", False),
+            gae_gamma=collect_config["gae_gamma"],
             epochs=train_config["epochs"],
         )
 
@@ -117,6 +116,12 @@ def main(
         if i % eval_config["eval_every"] == 0:
             agent.eval()
             evaluate(collection_type, env, agent, eval_config["episodes"])
+
+        if i % (iterations // 10) == 0:
+            train_config["entropy_coef"] *= 0.5
+            log_main.info(
+                f"Entropy coefficient reduced to {train_config['entropy_coef']}"
+            )
 
 
 if __name__ == "__main__":

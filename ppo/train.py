@@ -4,8 +4,9 @@ from typing import Iterator, Union
 import numpy as np
 import torch
 from torch.nn import functional as F
+from torch.nn.utils import clip_grad_value_
 
-from ppo.agent import PPOAgent, RNNPolicy
+from ppo.agent import MLPPolicy, PPOAgent, RNNPolicy
 from ppo.data import FrameBatch, TrajectoryBatch
 from ppo.log import log_train
 
@@ -13,10 +14,12 @@ from ppo.log import log_train
 def train(
     data: Iterator[Union[FrameBatch, TrajectoryBatch]],
     agent: PPOAgent,
-    policy_optimizer,
-    value_fn_optimizer,
+    policy_optimizer: torch.optim.Optimizer,
+    value_fn_optimizer: torch.optim.Optimizer,
     ppo_clip: float,
-    entropy_coeff: float,
+    entropy_coef: float,
+    use_value_iter: bool,
+    gae_gamma: float,
     epochs: int,
 ):
     update_policy_cost = 0.0
@@ -46,10 +49,10 @@ def train(
 
             logps = F.log_softmax(logits, dim=-1)
 
-            if entropy_coeff != 0:
+            if entropy_coef != 0:
                 # loss_ent is actually (coeff * -entropy), since we want to max entropy
                 loss_ent = logps.exp() * logps.masked_fill(batch.illegal_mask, 0.0)
-                loss_ent = entropy_coeff * torch.mean(torch.sum(loss_ent, dim=-1))
+                loss_ent = entropy_coef * torch.mean(torch.sum(loss_ent, dim=-1))
 
             action_logps = torch.gather(logps, dim=1, index=batch.actions)
             ratio = torch.exp(action_logps - batch.action_logps).squeeze()
@@ -57,10 +60,11 @@ def train(
             surr_2 = torch.clip(ratio, 1 - ppo_clip, 1 + ppo_clip) * batch.advantages
             loss_ppo = -torch.mean(torch.minimum(surr_1, surr_2))
 
-            if entropy_coeff != 0:
+            if entropy_coef != 0:
                 (loss_ppo + loss_ent).backward()
             else:
                 loss_ppo.backward()
+            clip_grad_value_(agent.policy.parameters(), 1.0)
             policy_optimizer.step()
 
             update_policy_cost += perf_counter() - update_policy_start
@@ -73,20 +77,25 @@ def train(
                 values = agent.value_fn(batch.observations.data)
             else:
                 values = agent.value_fn(batch.observations)
-            loss_vf = F.smooth_l1_loss(values, batch.emprets)
+            if use_value_iter:
+                values_target = batch.rewards + gae_gamma * batch.values_t1
+            else:
+                values_target = batch.emprets
+            loss_vf = F.smooth_l1_loss(values, values_target)
 
             loss_vf.backward()
+            clip_grad_value_(agent.policy.parameters(), 1.0)
             value_fn_optimizer.step()
 
             update_value_fn_cost += perf_counter() - update_value_fn_start
 
             losses_ppo.append(loss_ppo.item())
-            if entropy_coeff != 0:
+            if entropy_coef != 0:
                 losses_ent.append(loss_ent.item())
             losses_vf.append(loss_vf.item())
 
         avg_loss_ppo = np.mean(losses_ppo)
-        avg_loss_ent = np.mean(losses_ent) if entropy_coeff != 0 else 0
+        avg_loss_ent = np.mean(losses_ent) if entropy_coef != 0 else 0
         avg_loss_vf = np.mean(losses_vf)
 
         log_train.info(

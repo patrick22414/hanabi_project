@@ -63,25 +63,25 @@ class MLPPolicy(nn.Module):
         self.layers = nn.Sequential(
             *[
                 _linear_tanh(input_size if i == 0 else hidden_size, hidden_size)
-                for i in range(num_layers + 1)
+                for i in range(num_layers)
             ],
             _linear_tanh(hidden_size, output_size, tanh=False),
         )
 
-        # for p in self.parameters():
-        #     torch.nn.init.normal_(p, 1e-6)
+        for name, param in self.named_parameters():
+            if "bias" in name or f"layers.{num_layers}" in name:
+                torch.nn.init.zeros_(param)
+            else:
+                gain = torch.nn.init.calculate_gain("tanh")
+                torch.nn.init.xavier_uniform_(param, gain)
 
-    def forward(self, x: torch.Tensor, illegal_mask=None, exploit=False):
+    def forward(self, x: torch.Tensor, illegal_mask=None):
         logits = self.layers(x)
 
         if self.training:
             return logits
         else:
-            if exploit:
-                logits[illegal_mask] = float("-inf")
-                return torch.argmax(logits, dim=-1, keepdim=True)
-            else:
-                return _action_sampling(logits, illegal_mask)
+            return _action_sampling(logits, illegal_mask)
 
 
 class MLPValueFn(nn.Module):
@@ -91,13 +91,17 @@ class MLPValueFn(nn.Module):
         self.layers = nn.Sequential(
             *[
                 _linear_tanh(input_size if i == 0 else hidden_size, hidden_size)
-                for i in range(num_layers + 1)
+                for i in range(num_layers)
             ],
             _linear_tanh(hidden_size, 1, tanh=False),
         )
 
-        # for p in self.parameters():
-        #     torch.nn.init.normal_(p, std=1e-6)
+        for name, param in self.named_parameters():
+            if "bias" in name:
+                torch.nn.init.zeros_(param)
+            else:
+                gain = torch.nn.init.calculate_gain("tanh")
+                torch.nn.init.xavier_uniform_(param, gain)
 
     def forward(self, x):
         value = self.layers(x).squeeze()

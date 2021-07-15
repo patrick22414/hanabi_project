@@ -4,41 +4,42 @@
   "env_config": {
     "preset": "small",
     "players": 2,
-    "encoding_type": "card_knowledge",
+    "encoding_type": "prev_action",
     "buffer_size": 1
   },
   "agent_config": {
     "policy": {
       "type": "MLP",
       "hidden_size": 256,
-      "num_layers": 2
+      "num_layers": 4
     },
     "value_fn": {
       "type": "MLP",
       "hidden_size": 256,
-      "num_layers": 2
+      "num_layers": 4
     }
   },
   "collect_config": {
     "collection_type": "frame",
     "collection_size": 10000,
-    "parallel": 1,
+    "parallel": 16,
     "gae_gamma": 0.99,
     "gae_lambda": 0.95
   },
   "train_config": {
-    "epochs": 10,
+    "epochs": 5,
     "batch_size": 1024,
     "policy_optimizer": {
-      "lr": 5e-4,
-      "weight_decay": 1e-6
+      "lr": 1e-3,
+      "weight_decay": 1e-5
     },
     "value_fn_optimizer": {
       "lr": 1e-3,
-      "weight_decay": 1e-6
+      "weight_decay": 1e-5
     },
     "ppo_clip": 0.2,
-    "entropy_coeff": 0.0
+    "entropy_coef": 0.05,
+    "use_value_iter": false
   },
   "eval_config": {
     "eval_every": 1,

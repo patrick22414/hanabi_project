@@ -38,7 +38,7 @@
       "weight_decay": 1e-5
     },
     "ppo_clip": 0.2,
-    "entropy_coeff": 0.1
+    "entropy_coef": 0.1
   },
   "eval_config": {
     "eval_every": 1,

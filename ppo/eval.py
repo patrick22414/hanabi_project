@@ -7,6 +7,7 @@ from ppo.log import log_eval
 from ppo.utils import action_histogram
 
 
+@torch.no_grad()
 def evaluate(collection_type, env, agent, episodes=100):
     if collection_type == "frame":
         _evaluate_frames(env, agent, episodes)
@@ -36,15 +37,16 @@ def _evaluate_frames(env: PPOEnv, agent: PPOAgent, episodes=100):
             illegal_mask = torch.tensor(env.illegal_mask)
 
             # action selection
-            action, action_logp, entropy = agent.policy(obs, illegal_mask)
-            action = agent.policy(obs, illegal_mask, exploit=True)
+            action, action_logp, entropy = [
+                x.item() for x in agent.policy(obs, illegal_mask)
+            ]
 
-            reward, is_terminal = env.step(action.item())
+            reward, is_terminal = env.step(action)
 
             total_steps += 1
             total_reward += reward
-            total_entropy += entropy.item()
-            all_actions.append(env.get_move(action.item()).type().name)
+            total_entropy += entropy
+            all_actions.append(env.get_move(action).type().name)
 
     avg_length = total_steps / episodes
     avg_reward = total_reward / episodes
