@@ -84,7 +84,7 @@ def train(
             loss_vf = F.smooth_l1_loss(values, values_target)
 
             loss_vf.backward()
-            clip_grad_value_(agent.policy.parameters(), 1.0)
+            clip_grad_value_(agent.value_fn.parameters(), 1.0)
             value_fn_optimizer.step()
 
             update_value_fn_cost += perf_counter() - update_value_fn_start

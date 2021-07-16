@@ -4,7 +4,7 @@ from typing import List, Union
 
 import torch
 
-from ppo.agent import MLPPolicy, PPOAgent, RNNPolicy
+from ppo.agent import MLPPolicy, MLPValueFn, PPOAgent, RNNPolicy
 from ppo.data import Frame, Trajectory
 from ppo.env import PPOEnv
 from ppo.log import log_collect
@@ -19,15 +19,26 @@ def collect(
     agent: PPOAgent,
     gae_gamma: float,
     gae_lambda: float,
+    use_same_player_for_next_value=False,
 ):
     if collection_type == "frame":
         if parallel > 1:
             return _parallel_collect_frames(
-                collection_size, env_or_envs, agent, gae_gamma, gae_lambda
+                collection_size,
+                env_or_envs,
+                agent,
+                gae_gamma,
+                gae_lambda,
+                use_same_player_for_next_value,
             )
         else:
             return _collect_frames(
-                collection_size, env_or_envs, agent, gae_gamma, gae_lambda
+                collection_size,
+                env_or_envs,
+                agent,
+                gae_gamma,
+                gae_lambda,
+                use_same_player_for_next_value,
             )
 
     elif collection_type == "traj":
@@ -45,8 +56,10 @@ def _collect_frames(
     agent: PPOAgent,
     gae_gamma: float,
     gae_lambda: float,
+    use_same_player_for_next_value: bool,
 ):
     assert isinstance(agent.policy, MLPPolicy)
+    assert isinstance(agent.value_fn, MLPValueFn)
 
     collection: List[Frame] = []
     total_entropy = 0.0
@@ -55,7 +68,7 @@ def _collect_frames(
     start = perf_counter()
 
     while len(collection) < collection_size:
-        frames = []
+        frames: List[Frame] = []
 
         env.reset()
         is_terminal = False
@@ -68,7 +81,7 @@ def _collect_frames(
 
             # action selection
             action, action_logp, entropy = agent.policy(obs, illegal_mask)
-            total_entropy += entropy.item()
+            total_entropy += entropy.sum().item()
 
             # env update
             reward, is_terminal = env.step(action.item())
@@ -76,11 +89,19 @@ def _collect_frames(
 
             # value estimation
             value = agent.value_fn(obs)
-            if is_terminal:
-                value_t1 = value.new_tensor(0.0)
+            if use_same_player_for_next_value:
+                if is_terminal:
+                    value_t1 = value.new_tensor(0.0)
+                else:
+                    obs_t1 = obs.new_tensor(env.observation(p))
+                    value_t1 = agent.value_fn(obs_t1)
             else:
-                obs_t1 = obs.new_tensor(env.observation(p))
-                value_t1 = agent.value_fn(obs_t1)
+                # give value to the prev frame, and assign 0.0 to this frame
+                if len(frames) > 0:
+                    frames[-1].value_t1 = value
+                value_t1 = value.new_tensor(0.0)
+
+            # __import__("ipdb").set_trace()
 
             frames.append(
                 Frame(
@@ -96,8 +117,9 @@ def _collect_frames(
 
         gae_start = perf_counter()
         frames = _gae_frames(frames, gae_gamma, gae_lambda)
-        collection.extend(frames)
         gae_time_cost += perf_counter() - gae_start
+
+        collection.extend(frames)
 
     log_collect.info(f"Collection size: {len(collection)} frames")
     log_collect.info(f"Collection avg_entropy: {total_entropy / len(collection):.4f}")
@@ -114,46 +136,59 @@ def _parallel_collect_frames(
     agent: PPOAgent,
     gae_gamma: float,
     gae_lambda: float,
+    use_same_player_for_next_value: bool,
 ):
+    assert isinstance(agent.policy, MLPPolicy)
+    assert isinstance(agent.value_fn, MLPValueFn)
+
     collection: List[Frame] = []
 
     frames: List[List[Frame]] = [[] for _ in envs]
-    is_terminal_list = [True] * len(envs)
+    is_terminal_ls = [True] * len(envs)
+    total_entropy = 0.0
 
     gae_time_cost = 0.0
     start = perf_counter()
 
     while len(collection) < collection_size:
-        for it, env in zip(is_terminal_list, envs):
-            if it:
+        for is_terminal, env in zip(is_terminal_ls, envs):
+            if is_terminal:
                 env.reset()
 
-        cps = [env.cur_player for env in envs]
+        ps = [env.cur_player for env in envs]
 
         obs = torch.stack(
             [
                 torch.tensor(env.observation(p), dtype=torch.float)
-                for p, env in zip(cps, envs)
+                for p, env in zip(ps, envs)
             ]
         )
         illegal_mask = torch.stack([torch.tensor(env.illegal_mask) for env in envs])
 
-        actions, action_logps, ents = agent.policy(obs, illegal_mask)
-        rewards, is_terminal_list = tuple(
+        actions, action_logps, entropy = agent.policy(obs, illegal_mask)
+        total_entropy += entropy.sum().item()
+
+        rewards, is_terminal_ls = tuple(
             zip(*[env.step(a.item()) for a, env in zip(actions, envs)])
         )
+        rewards = [obs.new_tensor(r) for r in rewards]
 
         values = agent.value_fn(obs)
-        obs_t1 = torch.stack(
-            [
-                torch.tensor(env.observation(p), dtype=torch.float)
-                for p, env in zip(cps, envs)
-            ]
-        )
-        values_t1 = agent.value_fn(obs_t1)
-        for i, it in enumerate(is_terminal_list):
-            if it:
-                values_t1[i] = 0.0
+        if use_same_player_for_next_value:
+            obs_t1 = torch.stack(
+                [
+                    torch.tensor(env.observation(p), dtype=torch.float)
+                    for p, env in zip(ps, envs)
+                ]
+            )
+            values_t1 = agent.value_fn(obs_t1)
+            values_t1[is_terminal_ls] = 0.0
+        else:
+            # give value to the prev frame, and assign 0.0 to this frame
+            for fs, v in zip(frames, values):
+                if len(fs) > 0:
+                    fs[-1].value_t1 = v
+            values_t1 = torch.zeros_like(values)
 
         # __import__("ipdb").set_trace()
 
@@ -164,20 +199,23 @@ def _parallel_collect_frames(
                     illegal_mask=illegal_mask[i],
                     action_logp=action_logps[i],
                     action=actions[i],
-                    reward=obs.new_tensor(rewards[i]),
+                    reward=rewards[i],
                     value=values[i],
                     value_t1=values_t1[i],
                 )
             )
 
-        for it, fs in zip(is_terminal_list, frames):
-            if it:
+        for is_terminal, fs in zip(is_terminal_ls, frames):
+            if is_terminal:
                 gae_start = perf_counter()
                 collection.extend(_gae_frames(fs, gae_gamma, gae_lambda))
                 fs.clear()
                 gae_time_cost += perf_counter() - gae_start
 
     log_collect.info(f"Collection size: {len(collection)} frames")
+    log_collect.info(
+        f"Collection approximate avg_entropy: {total_entropy / len(collection):.4f}"
+    )
     log_collect.info(
         f"Parallel collection done in {perf_counter() - start:.2f} s, in which GAE cost {gae_time_cost:.2f} s"
     )

@@ -117,12 +117,6 @@ def main(
             agent.eval()
             evaluate(collection_type, env, agent, eval_config["episodes"])
 
-        if i % (iterations // 10) == 0:
-            train_config["entropy_coef"] *= 0.5
-            log_main.info(
-                f"Entropy coefficient reduced to {train_config['entropy_coef']}"
-            )
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

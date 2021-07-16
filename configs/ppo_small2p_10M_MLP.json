@@ -11,12 +11,12 @@
     "policy": {
       "type": "MLP",
       "hidden_size": 256,
-      "num_layers": 4
+      "num_layers": 2
     },
     "value_fn": {
       "type": "MLP",
       "hidden_size": 256,
-      "num_layers": 4
+      "num_layers": 2
     }
   },
   "collect_config": {
@@ -24,7 +24,8 @@
     "collection_size": 10000,
     "parallel": 16,
     "gae_gamma": 0.99,
-    "gae_lambda": 0.95
+    "gae_lambda": 0.95,
+    "use_same_player_for_next_value": false
   },
   "train_config": {
     "epochs": 5,
@@ -38,7 +39,7 @@
       "weight_decay": 1e-5
     },
     "ppo_clip": 0.2,
-    "entropy_coef": 0.05,
+    "entropy_coef": 0.01,
     "use_value_iter": false
   },
   "eval_config": {
