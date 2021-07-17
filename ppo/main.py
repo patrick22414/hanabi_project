@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import random
 
 import torch
@@ -10,8 +11,9 @@ from ppo.collect import collect
 from ppo.data import FrameBatch, TrajectoryBatch
 from ppo.env import PPOEnv
 from ppo.eval import evaluate
-from ppo.log import log_main
+from ppo.log import log_main, no_logfile, use_logfile
 from ppo.train import train
+from ppo.utils import checkpoint, linear_decay
 
 
 def main(
@@ -22,6 +24,7 @@ def main(
     collect_config: dict,
     train_config: dict,
     eval_config: dict,
+    checkpoints: int,
 ):
     env = PPOEnv(**env_config, seed=seed)
 
@@ -77,6 +80,11 @@ def main(
         eta_min=train_config["value_fn_optimizer"]["lr"] / 10,
     )
 
+    ppo_clip = train_config["ppo_clip"]
+    ppo_clip = linear_decay(ppo_clip, ppo_clip * 0.5, iterations)
+    entropy_coef = train_config["entropy_coef"]
+    entropy_coef = linear_decay(entropy_coef, 0.0, iterations)
+
     log_main.info("Initial evaluation")
     agent.eval()
     evaluate(collection_type, env, agent, eval_config["episodes"])
@@ -103,31 +111,56 @@ def main(
             agent,
             policy_optimizer,
             value_fn_optimizer,
-            ppo_clip=train_config["ppo_clip"],
-            entropy_coef=train_config["entropy_coef"],
-            use_value_iter=train_config.get("use_value_iter", False),
-            gae_gamma=collect_config["gae_gamma"],
             epochs=train_config["epochs"],
+            ppo_clip=ppo_clip[i],
+            entropy_coef=entropy_coef[i],
         )
-
-        policy_scheduler.step()
-        value_fn_scheduler.step()
 
         if i % eval_config["eval_every"] == 0:
             agent.eval()
             evaluate(collection_type, env, agent, eval_config["episodes"])
 
+        if i % (iterations // checkpoints) == 0:
+            checkpoint(
+                i,
+                iterations,
+                checkpoints,
+                agent.state_dict(),
+                policy_scheduler.get_last_lr()[0],
+                value_fn_scheduler.get_last_lr()[0],
+                ppo_clip[i],
+                entropy_coef[i],
+            )
+
+        policy_scheduler.step()
+        value_fn_scheduler.step()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", type=str, required=True)
-    parser.add_argument("-l", "--log-file", type=str)
+    parser.add_argument("-l", "--logfile", type=str)
+    parser.add_argument("-k", "--checkpoints", type=int, default=10)
 
     args = parser.parse_args()
 
     # parse config file
     with open(args.config, "r") as fi:
         config = json.load(fi)
+
+    if args.logfile:
+        if args.logfile == "0":
+            no_logfile()
+            log_main.info("Not using logfile")
+        else:
+            use_logfile("logs/" + args.logfile)
+            log_main.info(
+                f"Using logfile logs/{os.path.basename(log_main.handlers[-1].baseFilename)}"
+            )
+    else:
+        log_main.info(
+            f"Using logfile logs/{os.path.basename(log_main.handlers[-1].baseFilename)}"
+        )
 
     if "seed" not in config or config["seed"] < 0:
         config["seed"] = random.randint(0, 999)
@@ -150,4 +183,4 @@ if __name__ == "__main__":
 
     # log_main.info(f"learn_agent device: {device}, actor_agent device: {actor_device}")
 
-    main(**config)
+    main(**config, checkpoints=args.checkpoints)

@@ -16,11 +16,9 @@ def train(
     agent: PPOAgent,
     policy_optimizer: torch.optim.Optimizer,
     value_fn_optimizer: torch.optim.Optimizer,
+    epochs: int,
     ppo_clip: float,
     entropy_coef: float,
-    use_value_iter: bool,
-    gae_gamma: float,
-    epochs: int,
 ):
     update_policy_cost = 0.0
     update_value_fn_cost = 0.0
@@ -77,10 +75,7 @@ def train(
                 values = agent.value_fn(batch.observations.data)
             else:
                 values = agent.value_fn(batch.observations)
-            if use_value_iter:
-                values_target = batch.rewards + gae_gamma * batch.values_t1
-            else:
-                values_target = batch.emprets
+            values_target = batch.emprets
             loss_vf = F.smooth_l1_loss(values, values_target)
 
             loss_vf.backward()
