@@ -112,8 +112,8 @@ def main(
             policy_optimizer,
             value_fn_optimizer,
             epochs=train_config["epochs"],
-            ppo_clip=ppo_clip[i],
-            entropy_coef=entropy_coef[i],
+            ppo_clip=ppo_clip[i - 1],
+            entropy_coef=entropy_coef[i - 1],
         )
 
         if i % eval_config["eval_every"] == 0:
@@ -128,8 +128,8 @@ def main(
                 agent.state_dict(),
                 policy_scheduler.get_last_lr()[0],
                 value_fn_scheduler.get_last_lr()[0],
-                ppo_clip[i],
-                entropy_coef[i],
+                ppo_clip[i - 1],
+                entropy_coef[i - 1],
             )
 
         policy_scheduler.step()
