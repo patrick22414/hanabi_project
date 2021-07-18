@@ -1,4 +1,4 @@
-from typing import Callable, Union
+from typing import Callable, Union, overload
 
 import torch
 from torch import Tensor, nn
@@ -78,11 +78,17 @@ class _RNNBase(nn.Module):
 
 class RNNPolicy(_RNNBase):
     def __init__(
-        self, input_size, output_size, hidden_size, num_layers, use_preprocessing=False
+        self,
+        input_size: int,
+        output_size: int,
+        hidden_size: int,
+        num_layers: int,
+        use_preprocessing: bool = False,
     ):
         super().__init__(
             input_size, output_size, hidden_size, num_layers, use_preprocessing
         )
+        self._args = input_size, output_size, hidden_size, num_layers, use_preprocessing
 
     def forward(
         self,
@@ -121,8 +127,15 @@ class RNNPolicy(_RNNBase):
 
 
 class RNNValueFn(_RNNBase):
-    def __init__(self, input_size, hidden_size, num_layers, use_preprocessing=False):
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        num_layers: int,
+        use_preprocessing: bool = False,
+    ):
         super().__init__(input_size, 1, hidden_size, num_layers, use_preprocessing)
+        self._args = input_size, hidden_size, num_layers, use_preprocessing
 
     def forward(self, x: Union[Tensor, PackedSequence], h_0: Tensor = None):
         if self.training:
@@ -166,8 +179,16 @@ class _MLPBase(nn.Module):
             if "bias" in name or f"layers.{num_layers}" in name:
                 torch.nn.init.zeros_(param)
 
+        self._args = input_size, output_size, hidden_size, num_layers
+
 
 class MLPPolicy(_MLPBase):
+    def __init__(
+        self, input_size: int, output_size: int, hidden_size: int, num_layers: int
+    ):
+        super().__init__(input_size, output_size, hidden_size, num_layers)
+        self._args = input_size, output_size, hidden_size, num_layers
+
     def forward(self, x: Tensor, illegal_mask: Tensor = None):
         logits = self.layers(x)
 
@@ -180,6 +201,7 @@ class MLPPolicy(_MLPBase):
 class MLPValueFn(_MLPBase):
     def __init__(self, input_size: int, hidden_size: int, num_layers: int):
         super().__init__(input_size, 1, hidden_size, num_layers)
+        self._args = input_size, hidden_size, num_layers
 
     def forward(self, x):
         value = self.layers(x).squeeze()
@@ -190,8 +212,46 @@ class PPOAgent(nn.Module):
     policy: Union[MLPPolicy, RNNPolicy]
     value_fn: Union[MLPValueFn, RNNValueFn]
 
-    def __init__(self, policy, value_fn):
+    @overload
+    def __init__(self, policy: nn.Module, value_fn: nn.Module):
+        ...
+
+    @overload
+    def __init__(self, state_dict: dict):
+        ...
+
+    def __init__(self, *args, **kwargs):
         super().__init__()
 
-        self.add_module("policy", policy)
-        self.add_module("value_fn", value_fn)
+        if len(args) == 2:
+            policy, value_fn = args
+            self.add_module("policy", policy)
+            self.add_module("value_fn", value_fn)
+        elif len(args) == 1:
+            state_dict: dict = args[0]
+
+            policy_type = state_dict.pop("policy.type")
+            policy_args = state_dict.pop("policy.args")
+            if policy_type == MLPPolicy.__name__:
+                self.policy = MLPPolicy(*policy_args)
+            elif policy_type == RNNPolicy.__name__:
+                self.policy = RNNPolicy(*policy_args)
+
+            value_fn_type = state_dict.pop("value_fn.type")
+            value_fn_args = state_dict.pop("value_fn.args")
+            if value_fn_type == MLPValueFn.__name__:
+                self.value_fn = MLPValueFn(*value_fn_args)
+            elif value_fn_type == RNNValueFn.__name__:
+                self.value_fn = RNNValueFn(*value_fn_args)
+
+            self.load_state_dict(state_dict)
+        else:
+            raise ValueError
+
+    def state_dict(self, *args, **kwargs):
+        state_dict = super().state_dict(*args, **kwargs)
+        state_dict["policy.type"] = self.policy.__class__.__name__
+        state_dict["policy.args"] = self.policy._args
+        state_dict["value_fn.type"] = self.value_fn.__class__.__name__
+        state_dict["value_fn.args"] = self.value_fn._args
+        return state_dict

@@ -1,4 +1,9 @@
-import numpy as np
+import argparse
+import itertools
+import json
+import random
+from typing import List
+
 import torch
 
 from ppo.agent import PPOAgent, RNNPolicy
@@ -119,3 +124,76 @@ def _evaluate_trajectories(env: PPOEnv, agent: PPOAgent, episodes=100):
         f"avg_ent={avg_entropy:.2f}, "
         f"action_histogram={action_hist}"
     )
+
+
+@torch.no_grad()
+def main(
+    env_config: dict,
+    agents: List[PPOAgent],
+    episodes: int,
+    random_first_player=True,
+):
+    env = PPOEnv(**env_config)
+    assert len(agents) == 1 or len(agents) == env.players
+
+    total_steps = 0
+    total_reward = 0.0
+    all_actions = []
+
+    for _ in range(episodes):
+        env.reset()
+        is_terminal = False
+
+        if random_first_player:
+            random.shuffle(agents)
+
+        for agent in itertools.cycle(agents):
+            obs = torch.tensor(env.observation(env.cur_player), dtype=torch.float)
+            illegal_mask = torch.tensor(env.illegal_mask)
+
+            # action selection
+            action, _, _ = [x.item() for x in agent.policy(obs, illegal_mask)]
+
+            reward, is_terminal = env.step(action)
+
+            total_steps += 1
+            total_reward += reward
+            all_actions.append(env.get_move(action).type().name)
+            if is_terminal:
+                break
+
+    avg_length = total_steps / episodes
+    avg_reward = total_reward / episodes
+    action_hist = "\n" + action_histogram(all_actions)
+
+    log_eval.info(f"Evaluation done for {episodes} episodes")
+    log_eval.info(
+        "Performace: "
+        f"avg_length={avg_length:.2f}, "
+        f"avg_reward={avg_reward:.2f}, "
+        f"action_histogram={action_hist}"
+    )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("-c", "--config", type=str, required=True)
+    parser.add_argument("-a", "--agents", type=str, nargs="+", required=True)
+    parser.add_argument("-l", "--logfile", type=str)
+    parser.add_argument("-n", "--episodes", type=int, default=1000)
+
+    args = parser.parse_args()
+
+    # parse config file
+    with open(args.config, "r") as fi:
+        config = json.load(fi)
+
+    env_config = config["env_config"]
+
+    state_dicts = [torch.load(f, map_location="cpu") for f in args.agents]
+    agents = [PPOAgent(state_dict) for state_dict in state_dicts]
+    for agent in agents:
+        agent.eval()
+
+    main(env_config, agents, args.episodes)
