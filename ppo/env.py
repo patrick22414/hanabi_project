@@ -29,8 +29,8 @@ class PPOEnv:
                     "colors": 2,
                     "rank": 5,
                     "hand_size": 2,
-                    "max_information_tokens": 5,
-                    "max_life_tokens": 3,
+                    "max_information_tokens": 3,
+                    "max_life_tokens": 1,
                     "seed": seed,
                 }
             )
@@ -38,6 +38,7 @@ class PPOEnv:
 
         self.players = players
         self.num_actions = self._game.max_moves()
+        self.max_score = self._game.num_colors() * self._game.num_ranks()
         self.enc_type = encoding_type
         if self.enc_type == "prev_action":
             self.enc_size = self.num_actions + self._encoder.shape()[0]

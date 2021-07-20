@@ -1,6 +1,6 @@
 import argparse
 import json
-import os
+import logging
 import random
 
 import torch
@@ -11,9 +11,10 @@ from ppo.collect import collect
 from ppo.data import FrameBatch, TrajectoryBatch
 from ppo.env import PPOEnv
 from ppo.eval import evaluate
-from ppo.log import log_main, no_logfile, use_logfile
 from ppo.train import train
-from ppo.utils import checkpoint, linear_decay
+from ppo.utils import checkpoint, linear_decay, set_logfile
+
+LOG_MAIN = logging.getLogger("ppo.main")
 
 
 def main(
@@ -60,7 +61,7 @@ def main(
         ),
     )
 
-    log_main.info(f"Observation size: {env.obs_size}. Num actions: {env.num_actions}")
+    LOG_MAIN.info(f"Observation size: {env.obs_size}. Num actions: {env.num_actions}")
 
     policy_optimizer = torch.optim.Adam(
         agent.policy.parameters(), **train_config["policy_optimizer"]
@@ -85,12 +86,12 @@ def main(
     entropy_coef = train_config["entropy_coef"]
     entropy_coef = linear_decay(entropy_coef, 0.0, iterations)
 
-    log_main.info("Initial evaluation")
+    LOG_MAIN.info("Initial evaluation")
     agent.eval()
     evaluate(collection_type, env, agent, eval_config["episodes"])
 
     for i in range(1, iterations + 1):
-        log_main.info(f"====== Iteration {i}/{iterations} ======")
+        LOG_MAIN.info(f"====== Iteration {i}/{iterations} ======")
 
         agent.eval()
         if parallel > 1:
@@ -150,17 +151,14 @@ if __name__ == "__main__":
 
     if args.logfile:
         if args.logfile == "0":
-            no_logfile()
-            log_main.info("Not using logfile")
+            set_logfile("none")
+            LOG_MAIN.info("Not using logfile")
         else:
-            use_logfile("logs/" + args.logfile)
-            log_main.info(
-                f"Using logfile logs/{os.path.basename(log_main.handlers[-1].baseFilename)}"
-            )
+            filename = set_logfile(args.logfile)
+            LOG_MAIN.info(f"Using logfile {filename}")
     else:
-        log_main.info(
-            f"Using logfile logs/{os.path.basename(log_main.handlers[-1].baseFilename)}"
-        )
+        filename = set_logfile()
+        LOG_MAIN.info(f"Using default logfile {filename}")
 
     if "seed" not in config or config["seed"] < 0:
         config["seed"] = random.randint(0, 999)
@@ -168,7 +166,7 @@ if __name__ == "__main__":
     random.seed(config["seed"])
     torch.manual_seed(config["seed"])
 
-    log_main.info("JSON config:\n" + json.dumps(config, indent=4))
+    LOG_MAIN.info("JSON config:\n" + json.dumps(config, indent=4))
 
     # choose device
     # if torch.cuda.is_available() and args.device > 0:

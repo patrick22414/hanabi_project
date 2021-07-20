@@ -4,7 +4,7 @@
   "env_config": {
     "preset": "small",
     "players": 2,
-    "encoding_type": "prev_action",
+    "encoding_type": "card_knowledge",
     "buffer_size": 1
   },
   "agent_config": {
@@ -28,7 +28,7 @@
     "use_same_player_for_next_value": false
   },
   "train_config": {
-    "epochs": 5,
+    "epochs": 10,
     "batch_size": 1024,
     "policy_optimizer": {
       "lr": 1e-3,
@@ -39,8 +39,7 @@
       "weight_decay": 1e-5
     },
     "ppo_clip": 0.2,
-    "entropy_coef": 0.01,
-    "use_value_iter": false
+    "entropy_coef": 0.01
   },
   "eval_config": {
     "eval_every": 1,

@@ -1,17 +1,57 @@
 import logging
 import os
+import sys
+import time
+from datetime import datetime
 from typing import List
 
 import numpy as np
 import torch
 
-from ppo.log import log_main
+os.makedirs("checkpoints", exist_ok=True)
+os.makedirs("logs", exist_ok=True)
+
+FORMAT = "%(asctime)sZ %(levelname)-7s %(name)-11s %(message)s"
+DATEFORMAT = "%Y-%m-%dT%H:%M:%S"
+
+sh = logging.StreamHandler(sys.stdout)
+
+formatter = logging.Formatter(fmt=FORMAT, datefmt=DATEFORMAT)
+formatter.converter = time.gmtime
+sh.setFormatter(formatter)
+
+loggers = [
+    logging.getLogger("ppo.main"),
+    logging.getLogger("ppo.collect"),
+    logging.getLogger("ppo.train"),
+    logging.getLogger("ppo.eval"),
+]
+for logger in loggers:
+    logger.setLevel(logging.INFO)
+    logger.addHandler(sh)
+
+
+def set_logfile(filename="time"):
+    if filename == "none":
+        return None
+
+    if filename == "time":
+        filename = f"logs/ppo.{datetime.utcnow():%Y-%m-%dT%H%MZ}.log"
+    else:
+        filename = f"logs/{filename}"
+
+    fh = logging.FileHandler(filename, mode="w", delay=True)
+    fh.setFormatter(formatter)
+    for logger in loggers:
+        logger.addHandler(fh)
+
+    return filename
 
 
 def action_histogram(actions: List[str]):
     values, counts = np.unique(actions, return_counts=True)
 
-    line_1, line_2 = " " * 45, " " * 45
+    line_1, line_2 = " " * 4, " " * 4
 
     for v, c in zip(map(str, values), map(str, counts)):
         # size = max(len(v), len(c)) + 2
@@ -28,6 +68,9 @@ def linear_decay(start, end, t):
 
 def cosine_decay(start, end, t):
     return (np.cos(np.linspace(0, np.pi, t)) + 1) / 2 * (start - end) + end
+
+
+log_main = logging.getLogger("ppo.main")
 
 
 def checkpoint(

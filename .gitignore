@@ -2,7 +2,7 @@
 .vscode/
 
 _archive/
-checkpoints/
+checkpoints*/
 tmp*
 
 # Byte-compiled / optimized / DLL files

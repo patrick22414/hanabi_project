@@ -1,3 +1,4 @@
+import logging
 from time import perf_counter
 from typing import Iterator, Union
 
@@ -6,9 +7,10 @@ import torch
 from torch.nn import functional as F
 from torch.nn.utils import clip_grad_value_
 
-from ppo.agent import MLPPolicy, PPOAgent, RNNPolicy
+from ppo.agent import PPOAgent, RNNPolicy
 from ppo.data import FrameBatch, TrajectoryBatch
-from ppo.log import log_train
+
+LOG_TRAIN = logging.getLogger("ppo.train")
 
 
 def train(
@@ -93,14 +95,15 @@ def train(
         avg_loss_ent = np.mean(losses_ent) if entropy_coef != 0 else 0
         avg_loss_vf = np.mean(losses_vf)
 
-        log_train.info(
-            f"Training epoch {i_epoch}: "
-            f"average loss_ppo={avg_loss_ppo:.4f}, "
-            f"loss_ent={avg_loss_ent:.4f}, "
-            f"loss_vf={avg_loss_vf:.4f}"
-        )
+        if i_epoch == 1 or i_epoch == epochs:
+            LOG_TRAIN.info(
+                f"Training epoch {i_epoch:{int(np.ceil(np.log10(epochs + 1)))}d}: "
+                f"average loss_ppo={avg_loss_ppo:.4f}, "
+                f"loss_ent={avg_loss_ent:.4f}, "
+                f"loss_vf={avg_loss_vf:.4f}"
+            )
 
-    log_train.info(
+    LOG_TRAIN.info(
         f"Training done in {perf_counter() - start:.2f} s "
         f"(policy {update_policy_cost:.2f} s, "
         f"value_fn {update_value_fn_cost:.2f} s)"
