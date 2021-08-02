@@ -4,8 +4,8 @@
   "env_config": {
     "preset": "full",
     "players": 2,
-    "encoding_type": "prev_action",
-    "buffer_size": 2
+    "encoding_type": "card_knowledge",
+    "buffer_size": 1
   },
   "agent_config": {
     "policy": {
@@ -22,26 +22,26 @@
   "collect_config": {
     "collection_type": "frame",
     "collection_size": 10000,
-    "parallel": 64,
+    "parallel": 96,
     "gae_gamma": 0.99,
     "gae_lambda": 0.95
   },
   "train_config": {
-    "epochs": 5,
-    "batch_size": 1024,
+    "epochs": 10,
+    "batch_size": 2048,
     "policy_optimizer": {
-      "lr": 1e-3,
-      "weight_decay": 1e-5
+      "lr": 5e-4,
+      "weight_decay": 1e-6
     },
     "value_fn_optimizer": {
-      "lr": 1e-3,
-      "weight_decay": 1e-5
+      "lr": 5e-4,
+      "weight_decay": 1e-6
     },
     "ppo_clip": 0.2,
-    "entropy_coef": 0.1
+    "entropy_coef": 0.05
   },
   "eval_config": {
-    "eval_every": 1,
+    "eval_every": 10,
     "episodes": 100
   }
 }

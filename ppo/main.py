@@ -73,12 +73,12 @@ def main(
     policy_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         policy_optimizer,
         T_max=iterations,
-        eta_min=train_config["policy_optimizer"]["lr"] / 10,
+        eta_min=train_config["policy_optimizer"]["lr"] * 0.5,
     )
     value_fn_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         value_fn_optimizer,
         T_max=iterations,
-        eta_min=train_config["value_fn_optimizer"]["lr"] / 10,
+        eta_min=train_config["value_fn_optimizer"]["lr"] * 0.5,
     )
 
     ppo_clip = train_config["ppo_clip"]

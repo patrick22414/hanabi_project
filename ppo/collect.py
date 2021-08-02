@@ -5,7 +5,7 @@ from typing import List, Union
 
 import torch
 
-from ppo.agent import MLPPolicy, MLPValueFn, PPOAgent, RNNPolicy
+from ppo.agent import MLPPolicy, MLPValueFn, PPOAgent, RNNPolicy, RNNValueFn
 from ppo.data import Frame, Trajectory
 from ppo.env import PPOEnv
 
@@ -185,27 +185,33 @@ def _parallel_collect_frames(
             )
             values_t1 = agent.value_fn(obs_t1)
             values_t1[is_terminal_ls] = 0.0
+
+            for i, fs in enumerate(frames):
+                fs.append(
+                    Frame(
+                        observation=obs[i],
+                        illegal_mask=illegal_mask[i],
+                        action_logp=action_logps[i],
+                        action=actions[i],
+                        reward=rewards[i],
+                        value=values[i],
+                        value_t1=values_t1[i],
+                    )
+                )
         else:
-            # give value to the prev frame, and assign 0.0 to this frame
-            for fs, v in zip(frames, values):
-                if len(fs) > 0:
-                    fs[-1].value_t1 = v
-            values_t1 = torch.zeros_like(values)
+            for i, fs in enumerate(frames):
+                fs.append(
+                    Frame(
+                        observation=obs[i],
+                        illegal_mask=illegal_mask[i],
+                        action_logp=action_logps[i],
+                        action=actions[i],
+                        reward=rewards[i],
+                        value=values[i],
+                    )
+                )
 
         # __import__("ipdb").set_trace()
-
-        for i, fs in enumerate(frames):
-            fs.append(
-                Frame(
-                    observation=obs[i],
-                    illegal_mask=illegal_mask[i],
-                    action_logp=action_logps[i],
-                    action=actions[i],
-                    reward=rewards[i],
-                    value=values[i],
-                    value_t1=values_t1[i],
-                )
-            )
 
         for is_terminal, fs in zip(is_terminal_ls, frames):
             if is_terminal:
@@ -312,6 +318,24 @@ def _collect_trajectories(
     return collection
 
 
+def _parallel_collect_trajs(
+    collection_size: int,
+    envs: List[PPOEnv],
+    agent: PPOAgent,
+    gae_gamma: float,
+    gae_lambda: float,
+    use_same_player_for_next_value: bool,
+):
+    assert isinstance(agent.policy, RNNPolicy)
+    assert isinstance(agent.value_fn, RNNValueFn)
+
+    collection: List[Trajectory] = []
+    is_terminal_ls = [True] * len(envs)
+
+    pl_states = agent.policy.new_states(len(envs))
+    vf_states = agent.value_fn.new_states(len(envs))
+
+
 @dataclass
 class _IncompleteTrajectory:
     """Internal class used for collecting trajectories"""
@@ -335,7 +359,10 @@ def _gae_frames(frames: List[Frame], gamma: float, lam: float):
 
     rewards = torch.stack([f.reward for f in frames])
     values = torch.stack([f.value for f in frames])
-    values_t1 = torch.stack([f.value_t1 for f in frames])
+    if frames[0].value_t1 is not None:
+        values_t1 = torch.stack([f.value_t1 for f in frames])
+    else:
+        values_t1 = torch.cat([values[1:], torch.zeros(1)])
 
     deltas = rewards + gamma * values_t1 - values
 
