@@ -31,8 +31,6 @@ def evaluate(collection_type, env, agent, episodes=100):
 def _evaluate_trajectories(env: PPOEnv, agent: PPOAgent, episodes=100):
     assert isinstance(agent.policy, RNNPolicy)
 
-    players = env.players
-
     total_steps = 0
     total_reward = 0.0
     total_entropy = 0.0
@@ -40,30 +38,21 @@ def _evaluate_trajectories(env: PPOEnv, agent: PPOAgent, episodes=100):
 
     for _ in range(episodes):
         # RNN hidden states, one for each player
-        memories = [agent.policy.new_memory(1) for _ in range(players)]
+        states = agent.policy.new_states(1, extra_dims=(env.players,))
 
         env.reset()
         is_terminal = False
 
         while not is_terminal:
-            # make turn-based observation vector
+            obs = torch.tensor(env.observation(env.cur_player), dtype=torch.float)
             illegal_mask = torch.tensor(env.illegal_mask)
 
             # action selection
-            # obs and mask are shaped as 1-length and 1-batch
-            for p in range(players):
-                obs = torch.tensor(env.observation(p), dtype=torch.float)
+            action, action_logp, entropy, h_t = agent.policy(
+                obs.view(1, 1, -1), states[env.cur_player], illegal_mask.view(1, -1)
+            )
 
-                if p == env.cur_player:
-                    action, action_logp, entropy, h_t = agent.policy(
-                        obs.view(1, 1, -1), illegal_mask.view(1, -1), h_0=memories[p]
-                    )
-                else:
-                    h_t = agent.policy(
-                        obs.view(1, 1, -1), illegal_mask=None, h_0=memories[p]
-                    )
-
-                memories[p] = h_t
+            states[env.cur_player] = h_t
 
             # env update
             reward, is_terminal = env.step(action.item())

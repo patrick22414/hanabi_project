@@ -10,9 +10,7 @@ class ActionIsIllegal(RuntimeError):
 
 
 class PPOEnv:
-    def __init__(
-        self, preset, players, encoding_type="card_knowledge", buffer_size=1, seed=-1
-    ):
+    def __init__(self, preset, players, buffer_size=1, idle_reward=0.0, seed=-1):
         super().__init__()
 
         if preset == "full":
@@ -34,19 +32,20 @@ class PPOEnv:
                     "seed": seed,
                 }
             )
+
         self._encoder = ObservationEncoder(self._game)
 
         self.players = players
         self.num_actions = self._game.max_moves()
         self.max_score = self._game.num_colors() * self._game.num_ranks()
-        self.enc_type = encoding_type
-        if self.enc_type == "prev_action":
-            self.enc_size = self.num_actions + self._encoder.shape()[0]
-        else:  # self.enc_type == "card_knowledge"
-            self.enc_size = self._encoder.shape()[0]
+        self.idle_reward = idle_reward
+
+        self.enc_size = self._encoder.shape()[0]
         self.buf_size = buffer_size
-        self.obs_size = self.buf_size * self.enc_size
         self.enc_buffer: deque[np.ndarray] = deque(maxlen=buffer_size)
+
+        self.obs_size = self.buf_size * self.enc_size
+        self.full_obs_size = self.players * self.enc_size
 
         self.get_move = self._game.get_move
         self.get_move_uid = self._game.get_move_uid
@@ -56,13 +55,9 @@ class PPOEnv:
         while self._state.cur_player() == CHANCE_PLAYER_ID:
             self._state.deal_random_card()
 
-        self.score = self._state.score()
-        self.cur_player = self._state.cur_player()
-        self.illegal_mask = self._make_illegal_mask()
-        self.prev_action = self._make_prev_action(None)
         for _ in range(self.buf_size - 1):
             self.enc_buffer.append(np.zeros((self.players, self.enc_size), dtype=int))
-        self.enc_buffer.append(self._make_all_encodings())
+        self._update()
 
     def step(self, action: int) -> Tuple[float, bool]:
         move = self.get_move(action)
@@ -75,16 +70,12 @@ class PPOEnv:
             self._state.deal_random_card()
 
         new_score = self._state.score()
-        reward = 1.0 if new_score > self.score else 0.0
-
-        # prepare for next step
-        self.score = new_score
-        self.cur_player = self._state.cur_player()
-        self.illegal_mask = self._make_illegal_mask()
-        self.prev_action = self._make_prev_action(action)
-        self.enc_buffer.append(self._make_all_encodings())
+        reward = 1.0 if new_score > self.score else self.idle_reward
 
         is_terminal = self._state.is_terminal()
+
+        # prepare for next step
+        self._update()
 
         return reward, is_terminal
 
@@ -94,21 +85,24 @@ class PPOEnv:
         else:
             return np.concatenate([obs[player] for obs in self.enc_buffer])
 
-    def _encoding(self, player: int):
-        enc = np.array(self._encoder.encode(self._state.observation(player)))
-        if self.enc_type == "prev_action":
-            enc = np.concatenate([self.prev_action, enc])
-        return enc
+    def full_observation(self) -> np.ndarray:
+        # return self.enc_buffer[-1].flatten()
+        return np.roll(self.enc_buffer[-1], -self.cur_player, axis=0).flatten()
 
-    def _make_prev_action(self, action: int = None):
-        prev_action = np.zeros(self.num_actions, dtype=int)
-        if action is not None:
-            prev_action[action] = 1
-        return prev_action
+    def _update(self):
+        self.score = self._state.score()
+        self.cur_player = self._state.cur_player()
+        self.illegal_mask = self._make_illegal_mask()
+        self.enc_buffer.append(self._make_all_encodings())
 
     def _make_all_encodings(self):
-        all_obs = np.stack([self._encoding(p) for p in range(self.players)])
-        return all_obs
+        all_enc = np.stack(
+            [
+                np.array(self._encoder.encode(self._state.observation(p)))
+                for p in range(self.players)
+            ]
+        )
+        return all_enc
 
     # def _make_legal_moves(self):
     #     legal_moves = [self.get_move_uid(m) for m in self._state.legal_moves()]

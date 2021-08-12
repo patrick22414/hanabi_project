@@ -12,6 +12,28 @@ from ppo.env import PPOEnv
 LOG_COLLECT = logging.getLogger("ppo.collect")
 
 
+def _gae(rewards: torch.Tensor, values: torch.Tensor, gamma: float, lam: float):
+    """Generalised Advantage Estimation over one episode"""
+    length = len(rewards)
+
+    exponents = torch.arange(length)
+    glexp = torch.tensor(gamma * lam).pow(exponents)  # exponentials of (gamma * lam)
+    gammaexp = torch.tensor(gamma).pow(exponents)  # exponentials of gamma
+
+    values_t1 = torch.cat([values[1:], torch.zeros(1)])
+    deltas = rewards + gamma * values_t1 - values
+
+    # empirical return is a discounted sum of all future returns
+    # advantage is a discounted sum of all future deltas
+    emprets = torch.zeros_like(rewards)
+    advantages = torch.zeros_like(rewards)
+    for t in range(length):
+        emprets[t] = torch.sum(gammaexp[: length - t] * rewards[t:])
+        advantages[t] = torch.sum(glexp[: length - t] * deltas[t:])
+
+    return emprets, advantages
+
+
 @torch.no_grad()
 def collect(
     collection_type: str,
@@ -21,7 +43,6 @@ def collect(
     agent: PPOAgent,
     gae_gamma: float,
     gae_lambda: float,
-    use_same_player_for_next_value=False,
 ):
     if collection_type == "frame":
         if parallel > 1:
@@ -31,7 +52,6 @@ def collect(
                 agent,
                 gae_gamma,
                 gae_lambda,
-                use_same_player_for_next_value,
             )
         else:
             return _collect_frames(
@@ -40,10 +60,17 @@ def collect(
                 agent,
                 gae_gamma,
                 gae_lambda,
-                use_same_player_for_next_value,
             )
 
     elif collection_type == "traj":
+        if parallel > 1:
+            return _parallel_collect_trajectories(
+                collection_size,
+                env_or_envs,
+                agent,
+                gae_gamma,
+                gae_lambda,
+            )
         return _collect_trajectories(
             collection_size, env_or_envs, agent, gae_gamma, gae_lambda
         )
@@ -58,7 +85,6 @@ def _collect_frames(
     agent: PPOAgent,
     gae_gamma: float,
     gae_lambda: float,
-    use_same_player_for_next_value: bool,
 ):
     assert isinstance(agent.policy, MLPPolicy)
     assert isinstance(agent.value_fn, MLPValueFn)
@@ -91,17 +117,11 @@ def _collect_frames(
 
             # value estimation
             value = agent.value_fn(obs)
-            if use_same_player_for_next_value:
-                if is_terminal:
-                    value_t1 = value.new_tensor(0.0)
-                else:
-                    obs_t1 = obs.new_tensor(env.observation(p))
-                    value_t1 = agent.value_fn(obs_t1)
-            else:
-                # give value to the prev frame, and assign 0.0 to this frame
-                if len(frames) > 0:
-                    frames[-1].value_t1 = value
-                value_t1 = value.new_tensor(0.0)
+
+            # give value to the prev frame, and assign 0.0 to this frame
+            if len(frames) > 0:
+                frames[-1].value_t1 = value
+            value_t1 = value.new_tensor(0.0)
 
             # __import__("ipdb").set_trace()
 
@@ -138,7 +158,6 @@ def _parallel_collect_frames(
     agent: PPOAgent,
     gae_gamma: float,
     gae_lambda: float,
-    use_same_player_for_next_value: bool,
 ):
     assert isinstance(agent.policy, MLPPolicy)
     assert isinstance(agent.value_fn, MLPValueFn)
@@ -170,46 +189,29 @@ def _parallel_collect_frames(
         actions, action_logps, entropy = agent.policy(obs, illegal_mask)
         total_entropy += entropy.sum().item()
 
+        full_obs = torch.stack(
+            [torch.tensor(env.full_observation(), dtype=torch.float) for env in envs]
+        )
+        values = agent.value_fn(full_obs)
+
+        # env step
         rewards, is_terminal_ls = tuple(
             zip(*[env.step(a.item()) for a, env in zip(actions, envs)])
         )
         rewards = [obs.new_tensor(r) for r in rewards]
 
-        values = agent.value_fn(obs)
-        if use_same_player_for_next_value:
-            obs_t1 = torch.stack(
-                [
-                    torch.tensor(env.observation(p), dtype=torch.float)
-                    for p, env in zip(ps, envs)
-                ]
+        for i, fs in enumerate(frames):
+            fs.append(
+                Frame(
+                    observation=obs[i],
+                    full_observation=full_obs[i],
+                    illegal_mask=illegal_mask[i],
+                    action_logp=action_logps[i],
+                    action=actions[i],
+                    reward=rewards[i],
+                    value=values[i],
+                )
             )
-            values_t1 = agent.value_fn(obs_t1)
-            values_t1[is_terminal_ls] = 0.0
-
-            for i, fs in enumerate(frames):
-                fs.append(
-                    Frame(
-                        observation=obs[i],
-                        illegal_mask=illegal_mask[i],
-                        action_logp=action_logps[i],
-                        action=actions[i],
-                        reward=rewards[i],
-                        value=values[i],
-                        value_t1=values_t1[i],
-                    )
-                )
-        else:
-            for i, fs in enumerate(frames):
-                fs.append(
-                    Frame(
-                        observation=obs[i],
-                        illegal_mask=illegal_mask[i],
-                        action_logp=action_logps[i],
-                        action=actions[i],
-                        reward=rewards[i],
-                        value=values[i],
-                    )
-                )
 
         # __import__("ipdb").set_trace()
 
@@ -318,35 +320,135 @@ def _collect_trajectories(
     return collection
 
 
-def _parallel_collect_trajs(
+def _parallel_collect_trajectories(
     collection_size: int,
     envs: List[PPOEnv],
     agent: PPOAgent,
     gae_gamma: float,
     gae_lambda: float,
-    use_same_player_for_next_value: bool,
 ):
     assert isinstance(agent.policy, RNNPolicy)
-    assert isinstance(agent.value_fn, RNNValueFn)
+    assert isinstance(agent.value_fn, MLPValueFn)  # for now
 
+    num_envs = len(envs)
+    num_players = envs[0].players
     collection: List[Trajectory] = []
+
+    frames_ls: List[List[Frame]] = [[] for _ in envs]
     is_terminal_ls = [True] * len(envs)
+    total_steps = 0
+    total_entropy = 0.0
 
-    pl_states = agent.policy.new_states(len(envs))
-    vf_states = agent.value_fn.new_states(len(envs))
+    pl_states = agent.policy.new_states(1, extra_dims=(num_envs, num_players))
+    if isinstance(agent.value_fn, RNNValueFn):
+        vf_states = agent.policy.new_states(1, extra_dims=(num_envs, num_players))
+    else:
+        vf_states = None
 
+    gae_time_cost = 0.0
+    start = perf_counter()
 
-@dataclass
-class _IncompleteTrajectory:
-    """Internal class used for collecting trajectories"""
+    while total_steps < collection_size:
+        for is_terminal, (i, env) in zip(is_terminal_ls, enumerate(envs)):
+            if is_terminal:
+                env.reset()
+                pl_states[i] = agent.policy.new_states(1, extra_dims=(num_players,))
+                if vf_states:
+                    vf_states[i] = agent.policy.new_states(1, extra_dims=(num_players,))
 
-    observations: List[torch.Tensor] = field(default_factory=list)
-    illegal_mask: List[torch.Tensor] = field(default_factory=list)
-    action_logps: List[torch.Tensor] = field(default_factory=list)
-    actions: List[torch.Tensor] = field(default_factory=list)
-    rewards: List[torch.Tensor] = field(default_factory=list)
-    values: List[torch.Tensor] = field(default_factory=list)
-    values_t1: List[torch.Tensor] = field(default_factory=list)
+        cur_players = [env.cur_player for env in envs]
+
+        # action selection
+        obs = torch.stack(
+            [
+                torch.tensor(env.observation(p), dtype=torch.float)
+                for p, env in zip(cur_players, envs)
+            ]
+        )
+        h_0 = torch.cat([st[p] for p, st in zip(cur_players, pl_states)], dim=1)
+        illegal_mask = torch.stack([torch.tensor(env.illegal_mask) for env in envs])
+
+        actions, action_logps, entropy, h_t = agent.policy(
+            obs.unsqueeze(0), h_0, illegal_mask
+        )
+        total_entropy += entropy.sum().item()
+
+        for i, p in enumerate(cur_players):
+            pl_states[i, p] = h_t[:, i].unsqueeze(1)
+
+        # value estimation
+        full_obs = torch.stack(
+            [torch.tensor(env.full_observation(), dtype=torch.float) for env in envs]
+        )
+        if vf_states:
+            raise NotImplementedError
+        else:
+            values = agent.value_fn(full_obs)
+
+        # env step
+        rewards, is_terminal_ls = tuple(
+            zip(*[env.step(a.item()) for a, env in zip(actions, envs)])
+        )
+        rewards = [obs.new_tensor(r) for r in rewards]
+
+        for i, frames in enumerate(frames_ls):
+            frames.append(
+                Frame(
+                    observation=obs[i],
+                    full_observation=full_obs[i],
+                    illegal_mask=illegal_mask[i],
+                    action_logp=action_logps[i],
+                    action=actions[i],
+                    reward=rewards[i],
+                    value=values[i],
+                )
+            )
+
+        # __import__("ipdb").set_trace()
+
+        for is_terminal, frames, env in zip(is_terminal_ls, frames_ls, envs):
+            if is_terminal:
+                gae_start = perf_counter()
+
+                gae_rewards = torch.stack([f.reward for f in frames])
+                gae_values = torch.stack([f.value for f in frames])
+                emprets, advantages = _gae(
+                    gae_rewards, gae_values, gae_gamma, gae_lambda
+                )
+
+                for p in range(env.players):
+                    if p >= len(frames):
+                        continue
+                    subset = frames[p :: env.players]
+                    collection.append(
+                        Trajectory(
+                            observations=torch.stack([f.observation for f in subset]),
+                            full_observations=torch.stack(
+                                [f.full_observation for f in subset]
+                            ),
+                            illegal_masks=torch.stack([f.illegal_mask for f in subset]),
+                            action_logps=torch.stack([f.action_logp for f in subset]),
+                            actions=torch.stack([f.action for f in subset]),
+                            emprets=emprets[p :: env.players],
+                            advantages=advantages[p :: env.players],
+                        )
+                    )
+
+                total_steps += len(frames)
+                frames.clear()
+                gae_time_cost += perf_counter() - gae_start
+
+    LOG_COLLECT.info(
+        f"Collection size: {total_steps} frames in {len(collection)} trajectories"
+    )
+    LOG_COLLECT.info(
+        f"Collection approximate avg_entropy: {total_entropy / total_steps:.4f}"
+    )
+    LOG_COLLECT.info(
+        f"Parallel collection done in {perf_counter() - start:.2f} s, in which GAE cost {gae_time_cost:.2f} s"
+    )
+
+    return collection
 
 
 def _gae_frames(frames: List[Frame], gamma: float, lam: float):
@@ -359,10 +461,8 @@ def _gae_frames(frames: List[Frame], gamma: float, lam: float):
 
     rewards = torch.stack([f.reward for f in frames])
     values = torch.stack([f.value for f in frames])
-    if frames[0].value_t1 is not None:
-        values_t1 = torch.stack([f.value_t1 for f in frames])
-    else:
-        values_t1 = torch.cat([values[1:], torch.zeros(1)])
+
+    values_t1 = torch.cat([values[1:], torch.zeros(1)])
 
     deltas = rewards + gamma * values_t1 - values
 
@@ -379,46 +479,3 @@ def _gae_frames(frames: List[Frame], gamma: float, lam: float):
         f.advantage = adv
 
     return frames
-
-
-def _gae_traj(
-    traj: _IncompleteTrajectory, player_id, players, gamma: float, lam: float
-):
-    """Generalised Advantage Estimation for trajectories"""
-    length = len(traj.observations)
-
-    exponents = torch.arange(length)
-    glexp = torch.tensor(gamma * lam).pow(exponents)  # exponentials of (gamma * lam)
-    gammaexp = torch.tensor(gamma).pow(exponents)  # exponentials of gamma
-
-    rewards = torch.stack(traj.rewards)
-    values = torch.stack(traj.values)
-    values_t1 = torch.stack(traj.values_t1)
-
-    deltas = rewards + gamma * values_t1 - values
-
-    emprets = torch.zeros_like(deltas)
-    advantages = torch.zeros_like(deltas)
-    for t in range(length):
-        emprets[t] = torch.sum(gammaexp[: length - t] * rewards[t:])
-        advantages[t] = torch.sum(glexp[: length - t] * deltas[t:])  # TODO: check math
-
-    # __import__("ipdb").set_trace()
-
-    observations = torch.stack(traj.observations)
-    action_mask = torch.zeros(len(observations), dtype=torch.bool)
-    action_mask[player_id::players] = True
-    illegal_mask = torch.stack(traj.illegal_mask)
-    action_logps = torch.stack(traj.action_logps)
-    actions = torch.stack(traj.actions)
-    advantages = advantages[player_id::players]
-
-    return Trajectory(
-        observations=observations,
-        action_mask=action_mask,
-        illegal_mask=illegal_mask,
-        action_logps=action_logps,
-        actions=actions,
-        advantages=advantages,
-        emprets=emprets,
-    )

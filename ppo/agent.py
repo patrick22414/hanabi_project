@@ -72,8 +72,13 @@ class _RNNBase(nn.Module):
             if "bias" in name or "post" in name:
                 torch.nn.init.zeros_(param)
 
-    def new_states(self, batch_size: int):
-        return torch.zeros(self.num_layers, batch_size, self.hidden_size)
+    def new_states(self, batch_size: int, extra_dims=None):
+        if extra_dims is None:
+            return torch.zeros(self.num_layers, batch_size, self.hidden_size)
+        else:
+            return torch.zeros(
+                *extra_dims, self.num_layers, batch_size, self.hidden_size
+            )
 
 
 class RNNPolicy(_RNNBase):
@@ -83,7 +88,7 @@ class RNNPolicy(_RNNBase):
         output_size: int,
         hidden_size: int,
         num_layers: int,
-        use_preprocessing: bool = False,
+        use_preprocessing: bool = True,
     ):
         super().__init__(
             input_size, output_size, hidden_size, num_layers, use_preprocessing
@@ -113,15 +118,15 @@ class RNNPolicy(_RNNBase):
             assert h_0 is not None
 
             if self.pre:
-                x = _apply_to_packed_sequence(self.pre, x)
+                x = self.pre(x)
             logits, h_t = self.gru(x, h_0)
 
             # non-acting case, only new states are needed
-            if not illegal_mask:
+            if illegal_mask is None:
                 return h_t
 
             # sample actions from the last output
-            logits = _apply_to_packed_sequence(self.post, logits)
+            logits = self.post(logits)
             action, action_logp, ent = _action_sampling(logits[-1], illegal_mask)
             return action, action_logp, ent, h_t
 
@@ -132,7 +137,7 @@ class RNNValueFn(_RNNBase):
         input_size: int,
         hidden_size: int,
         num_layers: int,
-        use_preprocessing: bool = False,
+        use_preprocessing: bool = True,
     ):
         super().__init__(input_size, 1, hidden_size, num_layers, use_preprocessing)
         self._args = input_size, hidden_size, num_layers, use_preprocessing

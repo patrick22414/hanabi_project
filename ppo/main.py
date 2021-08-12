@@ -6,7 +6,7 @@ import random
 import torch
 from torch.utils.data import DataLoader
 
-from ppo.agent import MLPPolicy, MLPValueFn, PPOAgent, RNNPolicy
+from ppo.agent import MLPPolicy, MLPValueFn, PPOAgent, RNNPolicy, RNNValueFn
 from ppo.collect import collect
 from ppo.data import FrameBatch, TrajectoryBatch
 from ppo.env import PPOEnv
@@ -42,7 +42,9 @@ def main(
     else:
         raise ValueError
 
-    if agent_config["value_fn"]["type"] == "MLP":
+    if agent_config["value_fn"]["type"] == "RNN":
+        value_fn_cls = RNNValueFn
+    elif agent_config["value_fn"]["type"] == "MLP":
         value_fn_cls = MLPValueFn
     else:
         raise ValueError
@@ -55,7 +57,7 @@ def main(
             agent_config["policy"]["num_layers"],
         ),
         value_fn_cls(
-            env.obs_size,
+            env.full_obs_size,
             agent_config["value_fn"]["hidden_size"],
             agent_config["value_fn"]["num_layers"],
         ),
@@ -63,28 +65,13 @@ def main(
 
     LOG_MAIN.info(f"Observation size: {env.obs_size}. Num actions: {env.num_actions}")
 
-    policy_optimizer = torch.optim.Adam(
-        agent.policy.parameters(), **train_config["policy_optimizer"]
-    )
-    value_fn_optimizer = torch.optim.Adam(
-        agent.value_fn.parameters(), **train_config["value_fn_optimizer"]
+    optimizer = torch.optim.Adam(agent.parameters(), **train_config["optimizer"])
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=iterations, **train_config["scheduler"]
     )
 
-    policy_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        policy_optimizer,
-        T_max=iterations,
-        eta_min=train_config["policy_optimizer"]["lr"] * 0.5,
-    )
-    value_fn_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        value_fn_optimizer,
-        T_max=iterations,
-        eta_min=train_config["value_fn_optimizer"]["lr"] * 0.5,
-    )
-
-    ppo_clip = train_config["ppo_clip"]
-    ppo_clip = linear_decay(ppo_clip, ppo_clip * 0.5, iterations)
-    entropy_coef = train_config["entropy_coef"]
-    entropy_coef = linear_decay(entropy_coef, 0.0, iterations)
+    ppo_clip = linear_decay(*train_config["ppo_clip"], iterations)
+    entropy_coef = linear_decay(*train_config["entropy_coef"], iterations)
 
     LOG_MAIN.info("Initial evaluation")
     agent.eval()
@@ -110,8 +97,7 @@ def main(
         train(
             dataloader,
             agent,
-            policy_optimizer,
-            value_fn_optimizer,
+            optimizer,
             epochs=train_config["epochs"],
             ppo_clip=ppo_clip[i - 1],
             entropy_coef=entropy_coef[i - 1],
@@ -127,14 +113,12 @@ def main(
                 iterations,
                 checkpoints,
                 agent.state_dict(),
-                policy_scheduler.get_last_lr()[0],
-                value_fn_scheduler.get_last_lr()[0],
+                scheduler.get_last_lr()[0],
                 ppo_clip[i - 1],
                 entropy_coef[i - 1],
             )
 
-        policy_scheduler.step()
-        value_fn_scheduler.step()
+        scheduler.step()
 
 
 if __name__ == "__main__":

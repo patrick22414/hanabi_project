@@ -16,16 +16,13 @@ LOG_TRAIN = logging.getLogger("ppo.train")
 def train(
     data: Iterator[Union[FrameBatch, TrajectoryBatch]],
     agent: PPOAgent,
-    policy_optimizer: torch.optim.Optimizer,
-    value_fn_optimizer: torch.optim.Optimizer,
+    optimizer: torch.optim.Optimizer,
     epochs: int,
     ppo_clip: float,
     entropy_coef: float,
 ):
-    update_policy_cost = 0.0
-    update_value_fn_cost = 0.0
     start = perf_counter()
-    is_rnn = isinstance(agent.policy, RNNPolicy)
+    is_rnn_policy = isinstance(agent.policy, RNNPolicy)
 
     for i_epoch in range(1, epochs + 1):
         losses_ppo = []
@@ -34,24 +31,21 @@ def train(
 
         for batch in data:
             # batch = batch.to(device)
+            optimizer.zero_grad()
 
             # update RNN policy
-            update_policy_start = perf_counter()
-            policy_optimizer.zero_grad()
-
-            if is_rnn:
+            if is_rnn_policy:
                 logits, _ = agent.policy(batch.observations)
-                logits = logits.data[batch.action_mask]
-                logits = logits.masked_fill(batch.illegal_mask, float("-inf"))
+                logits = logits.data.masked_fill(batch.illegal_masks, float("-inf"))
             else:
                 logits = agent.policy(batch.observations)
-                logits = logits.masked_fill(batch.illegal_mask, float("-inf"))
+                logits = logits.masked_fill(batch.illegal_masks, float("-inf"))
 
             logps = F.log_softmax(logits, dim=-1)
 
             if entropy_coef != 0:
                 # loss_ent is actually (coeff * -entropy), since we want to max entropy
-                loss_ent = logps.exp() * logps.masked_fill(batch.illegal_mask, 0.0)
+                loss_ent = logps.exp() * logps.masked_fill(batch.illegal_masks, 0.0)
                 loss_ent = entropy_coef * torch.mean(torch.sum(loss_ent, dim=-1))
 
             action_logps = torch.gather(logps, dim=1, index=batch.actions)
@@ -60,40 +54,26 @@ def train(
             surr_2 = torch.clip(ratio, 1 - ppo_clip, 1 + ppo_clip) * batch.advantages
             loss_ppo = -torch.mean(torch.minimum(surr_1, surr_2))
 
-            if entropy_coef != 0:
-                (loss_ppo + loss_ent).backward()
-            else:
-                loss_ppo.backward()
-            clip_grad_value_(agent.policy.parameters(), 1.0)
-            policy_optimizer.step()
-
-            update_policy_cost += perf_counter() - update_policy_start
-
             # update value function
-            update_value_fn_start = perf_counter()
-            value_fn_optimizer.zero_grad()
+            values = agent.value_fn(batch.full_observations)
+            loss_vf = F.smooth_l1_loss(values, batch.emprets)
 
-            if is_rnn:
-                values = agent.value_fn(batch.observations.data)
+            # backward
+            if entropy_coef != 0:
+                (loss_ppo + loss_vf + loss_ent).backward()
             else:
-                values = agent.value_fn(batch.observations)
-            values_target = batch.emprets
-            loss_vf = F.smooth_l1_loss(values, values_target)
-
-            loss_vf.backward()
-            clip_grad_value_(agent.value_fn.parameters(), 1.0)
-            value_fn_optimizer.step()
-
-            update_value_fn_cost += perf_counter() - update_value_fn_start
+                (loss_ppo + loss_vf).backward()
+            clip_grad_value_(agent.parameters(), 1.0)
+            optimizer.step()
 
             losses_ppo.append(loss_ppo.item())
+            losses_vf.append(loss_vf.item())
             if entropy_coef != 0:
                 losses_ent.append(loss_ent.item())
-            losses_vf.append(loss_vf.item())
 
         avg_loss_ppo = np.mean(losses_ppo)
-        avg_loss_ent = np.mean(losses_ent) if entropy_coef != 0 else 0
         avg_loss_vf = np.mean(losses_vf)
+        avg_loss_ent = np.mean(losses_ent) if entropy_coef != 0 else 0
 
         if i_epoch == 1 or i_epoch == epochs:
             LOG_TRAIN.info(
@@ -103,8 +83,4 @@ def train(
                 f"loss_vf={avg_loss_vf:.4f}"
             )
 
-    LOG_TRAIN.info(
-        f"Training done in {perf_counter() - start:.2f} s "
-        f"(policy {update_policy_cost:.2f} s, "
-        f"value_fn {update_value_fn_cost:.2f} s)"
-    )
+    LOG_TRAIN.info(f"Training done in {perf_counter() - start:.2f} s ")

@@ -78,8 +78,7 @@ def checkpoint(
     iterations,
     checkpoints,
     state_dict,
-    policy_lr,
-    value_fn_lr,
+    lr,
     ppo_clip,
     entropy_coef,
 ):
@@ -98,8 +97,7 @@ def checkpoint(
     else:
         log_main.info("Not using logfile")
 
-    log_main.info(f"Current lr for policy: {policy_lr:.2e}")
-    log_main.info(f"Current lr for value_fn: {value_fn_lr:.2e}")
+    log_main.info(f"Current learning rate: {lr:.2e}")
     log_main.info(f"Current ppo_clip: {ppo_clip:.2e}")
     log_main.info(f"Current entropy_coef: {entropy_coef:.2e}")
 
