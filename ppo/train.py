@@ -20,6 +20,7 @@ def train(
     epochs: int,
     ppo_clip: float,
     entropy_coef: float,
+    value_fn_coef: float,
 ):
     start = perf_counter()
     is_rnn_policy = isinstance(agent.policy, RNNPolicy)
@@ -56,7 +57,7 @@ def train(
 
             # update value function
             values = agent.value_fn(batch.full_observations)
-            loss_vf = F.smooth_l1_loss(values, batch.emprets)
+            loss_vf = value_fn_coef * F.mse_loss(values, batch.emprets)
 
             # backward
             if entropy_coef != 0:

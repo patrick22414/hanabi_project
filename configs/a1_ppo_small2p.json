@@ -38,7 +38,8 @@
       "eta_min": 4e-4
     },
     "ppo_clip": [0.2, 0.1],
-    "entropy_coef": [0.01, 0.0]
+    "entropy_coef": [0.01, 0.0],
+    "value_fn_coef": 2.0
   },
   "eval_config": {
     "eval_every": 1,

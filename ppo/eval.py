@@ -68,6 +68,7 @@ def _evaluate_frames(
     env: PPOEnv,
     agents: List[PPOAgent],
     episodes: int,
+    deterministic: bool,
     random_first_player=True,
     save_record_file=False,
 ):
@@ -139,9 +140,10 @@ def _evaluate_frames(
 
 
 @torch.no_grad()
-def evaluate(collection_type, env, agent, episodes=100):
+def evaluate(collection_type, env, agent, episodes=100, deterministic=True):
+    # TODO: unify evaluation
     if collection_type == "frame":
-        _evaluate_frames(env, [agent], episodes)
+        _evaluate_frames(env, [agent], episodes, deterministic)
 
     elif collection_type == "traj":
         _evaluate_trajectories(env, agent, episodes)

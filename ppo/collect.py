@@ -91,11 +91,11 @@ def _collect_frames(
         gae_rewards = torch.stack([f.reward for f in frames])
         gae_values = torch.stack([f.value for f in frames])
         emprets, advantages = _gae(gae_rewards, gae_values, gae_gamma, gae_lambda)
+        gae_time_cost += perf_counter() - gae_start
+
         for f, empret, adv in zip(frames, emprets, advantages):
             f.empret = empret
             f.advantage = adv
-        gae_time_cost += perf_counter() - gae_start
-
         collection.extend(frames)
 
     LOG_COLLECT.info(
@@ -179,11 +179,14 @@ def _parallel_collect_frames(
                 emprets, advantages = _gae(
                     gae_rewards, gae_values, gae_gamma, gae_lambda
                 )
+                gae_time_cost += perf_counter() - gae_start
+
                 for f, empret, adv in zip(frames, emprets, advantages):
                     f.empret = empret
                     f.advantage = adv
+                collection.extend(frames)
+
                 frames.clear()
-                gae_time_cost += perf_counter() - gae_start
 
     LOG_COLLECT.info(
         f"Collection size: {len(collection)} frames; avg_entropy: {total_entropy / len(collection):.4f}"
@@ -256,6 +259,8 @@ def _collect_trajectories(
         gae_rewards = torch.stack([f.reward for f in frames])
         gae_values = torch.stack([f.value for f in frames])
         emprets, advantages = _gae(gae_rewards, gae_values, gae_gamma, gae_lambda)
+        gae_time_cost += perf_counter() - gae_start
+
         # player may have 0 move before the game ends
         for p in range(min(env.players, len(frames))):
             subset = frames[p :: env.players]
@@ -270,8 +275,7 @@ def _collect_trajectories(
                     advantages=advantages[p :: env.players],
                 )
             )
-        total_steps += len(frames)
-        gae_time_cost += perf_counter() - gae_start
+            total_steps += len(subset)
 
     LOG_COLLECT.info(
         f"Collection size: {total_steps} frames in {len(collection)} trajectories; avg_entropy: {total_entropy / total_steps:.4f}"
@@ -377,6 +381,8 @@ def _parallel_collect_trajectories(
                 emprets, advantages = _gae(
                     gae_rewards, gae_values, gae_gamma, gae_lambda
                 )
+                gae_time_cost += perf_counter() - gae_start
+
                 # player may have 0 move before the game ends
                 for p in range(min(env.players, len(frames))):
                     subset = frames[p :: env.players]
@@ -393,9 +399,9 @@ def _parallel_collect_trajectories(
                             advantages=advantages[p :: env.players],
                         )
                     )
-                total_steps += len(frames)
+                    total_steps += len(subset)
+
                 frames.clear()
-                gae_time_cost += perf_counter() - gae_start
 
     LOG_COLLECT.info(
         f"Collection size: {total_steps} frames in {len(collection)} trajectories; avg_entropy: {total_entropy / total_steps:.4f}"
@@ -420,29 +426,17 @@ def collect(
     if collection_type == "frame":
         if parallel > 1:
             return _parallel_collect_frames(
-                collection_size,
-                env_or_envs,
-                agent,
-                gae_gamma,
-                gae_lambda,
+                collection_size, env_or_envs, agent, gae_gamma, gae_lambda
             )
         else:
             return _collect_frames(
-                collection_size,
-                env_or_envs,
-                agent,
-                gae_gamma,
-                gae_lambda,
+                collection_size, env_or_envs, agent, gae_gamma, gae_lambda
             )
 
     elif collection_type == "traj":
         if parallel > 1:
             return _parallel_collect_trajectories(
-                collection_size,
-                env_or_envs,
-                agent,
-                gae_gamma,
-                gae_lambda,
+                collection_size, env_or_envs, agent, gae_gamma, gae_lambda
             )
         else:
             return _collect_trajectories(

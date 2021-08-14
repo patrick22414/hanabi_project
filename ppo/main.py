@@ -102,6 +102,7 @@ def main(
             epochs=train_config["epochs"],
             ppo_clip=ppo_clip[i - 1],
             entropy_coef=entropy_coef[i - 1],
+            value_fn_coef=train_config["value_fn_coef"],
         )
 
         if i % eval_config["eval_every"] == 0:
