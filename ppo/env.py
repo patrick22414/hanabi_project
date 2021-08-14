@@ -10,7 +10,15 @@ class ActionIsIllegal(RuntimeError):
 
 
 class PPOEnv:
-    def __init__(self, preset, players, buffer_size=1, idle_reward=0.0, seed=-1):
+    def __init__(
+        self,
+        preset,
+        players,
+        buffer_size=1,
+        full_obs_type="local",
+        idle_reward=0.0,
+        seed=-1,
+    ):
         super().__init__()
 
         if preset == "full":
@@ -38,14 +46,19 @@ class PPOEnv:
         self.players = players
         self.num_actions = self._game.max_moves()
         self.max_score = self._game.num_colors() * self._game.num_ranks()
-        self.idle_reward = idle_reward
 
         self.enc_size = self._encoder.shape()[0]
         self.buf_size = buffer_size
         self.enc_buffer: deque[np.ndarray] = deque(maxlen=buffer_size)
 
         self.obs_size = self.buf_size * self.enc_size
-        self.full_obs_size = self.players * self.enc_size
+        self.full_obs_type = full_obs_type
+        if self.full_obs_type == "local":
+            self.full_obs_size = self.enc_size
+        else:
+            self.full_obs_size = self.players * self.enc_size
+
+        self.idle_reward = idle_reward
 
         self.get_move = self._game.get_move
         self.get_move_uid = self._game.get_move_uid
@@ -86,8 +99,14 @@ class PPOEnv:
             return np.concatenate([obs[player] for obs in self.enc_buffer])
 
     def full_observation(self) -> np.ndarray:
-        # return self.enc_buffer[-1].flatten()
-        return np.roll(self.enc_buffer[-1], -self.cur_player, axis=0).flatten()
+        if self.full_obs_type == "local":
+            return self.enc_buffer[-1][self.cur_player]
+        elif self.full_obs_type == "cat":
+            return self.enc_buffer[-1].flatten()
+        elif self.full_obs_type == "roll":
+            return np.roll(self.enc_buffer[-1], -self.cur_player, axis=0).flatten()
+        else:
+            raise ValueError
 
     def _update(self):
         self.score = self._state.score()

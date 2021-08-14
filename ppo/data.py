@@ -14,7 +14,6 @@ class Frame:
     action: torch.LongTensor  # [1]
     reward: torch.Tensor  # []
     value: torch.Tensor  # []
-    value_t1: torch.Tensor = None  # []
     empret: torch.Tensor = None  # [], empirical return
     advantage: torch.Tensor = None  # []
 

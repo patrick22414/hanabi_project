@@ -16,18 +16,6 @@ from ppo.utils import action_histogram, set_logfile
 LOG_EVAL = logging.getLogger("ppo.eval")
 
 
-@torch.no_grad()
-def evaluate(collection_type, env, agent, episodes=100):
-    if collection_type == "frame":
-        _evaluate_frames(env, [agent], episodes)
-
-    elif collection_type == "traj":
-        _evaluate_trajectories(env, agent, episodes)
-
-    else:
-        raise ValueError
-
-
 def _evaluate_trajectories(env: PPOEnv, agent: PPOAgent, episodes=100):
     assert isinstance(agent.policy, RNNPolicy)
 
@@ -148,6 +136,18 @@ def _evaluate_frames(
         with open(filename, "w") as fo:
             json.dump(records, fo, indent=4)
         LOG_EVAL.info(f"Records saved to {filename}")
+
+
+@torch.no_grad()
+def evaluate(collection_type, env, agent, episodes=100):
+    if collection_type == "frame":
+        _evaluate_frames(env, [agent], episodes)
+
+    elif collection_type == "traj":
+        _evaluate_trajectories(env, agent, episodes)
+
+    else:
+        raise ValueError
 
 
 @torch.no_grad()

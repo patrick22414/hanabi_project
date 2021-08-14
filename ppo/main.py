@@ -86,11 +86,12 @@ def main(
         else:
             collection = collect(env_or_envs=env, agent=agent, **collect_config)
 
+        collate_fn = TrajectoryBatch if collection_type == "traj" else FrameBatch
         dataloader = DataLoader(
             collection,
             train_config["batch_size"],
             shuffle=True,
-            collate_fn=TrajectoryBatch if collection_type == "traj" else FrameBatch,
+            collate_fn=collate_fn,
         )
 
         agent.train()

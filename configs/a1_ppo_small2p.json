@@ -4,17 +4,19 @@
   "env_config": {
     "preset": "small",
     "players": 2,
-    "buffer_size": 1
+    "buffer_size": 1,
+    "full_obs_type": "local",
+    "idle_reward": 0.0
   },
   "agent_config": {
     "policy": {
       "type": "RNN",
-      "hidden_size": 128,
+      "hidden_size": 256,
       "num_layers": 1
     },
     "value_fn": {
       "type": "MLP",
-      "hidden_size": 128,
+      "hidden_size": 256,
       "num_layers": 2
     }
   },
@@ -29,11 +31,11 @@
     "epochs": 10,
     "batch_size": 512,
     "optimizer": {
-      "lr": 5e-4,
+      "lr": 8e-4,
       "weight_decay": 1e-6
     },
     "scheduler": {
-      "eta_min": 5e-4
+      "eta_min": 4e-4
     },
     "ppo_clip": [0.2, 0.1],
     "entropy_coef": [0.01, 0.0]
