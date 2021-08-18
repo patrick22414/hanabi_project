@@ -15,16 +15,25 @@ class PPOEnv:
         preset,
         players,
         buffer_size=1,
+        obs_type="card_knowledge",
         full_obs_type="local",
         idle_reward=0.0,
         seed=-1,
     ):
         super().__init__()
 
+        if obs_type == "card_knowledge":
+            self.obs_type = AgentObservationType.CARD_KNOWLEDGE
+        elif obs_type == "minimal":
+            self.obs_type = AgentObservationType.MINIMAL
+        else:
+            raise ValueError
+
         if preset == "full":
             self._game = HanabiGame(
                 {
                     "players": players,
+                    "observation_type": self.obs_type.value,
                     "seed": seed,
                 }
             )
@@ -37,6 +46,7 @@ class PPOEnv:
                     "hand_size": 2,
                     "max_information_tokens": 3,
                     "max_life_tokens": 1,
+                    "observation_type": self.obs_type.value,
                     "seed": seed,
                 }
             )

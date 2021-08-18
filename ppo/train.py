@@ -57,7 +57,7 @@ def train(
 
             # update value function
             values = agent.value_fn(batch.full_observations)
-            loss_vf = value_fn_coef * F.mse_loss(values, batch.emprets)
+            loss_vf = value_fn_coef * F.smooth_l1_loss(values, batch.emprets)
 
             # backward
             if entropy_coef != 0:

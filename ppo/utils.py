@@ -31,12 +31,12 @@ for logger in loggers:
     logger.addHandler(sh)
 
 
-def set_logfile(filename="time"):
+def set_logfile(prefix, filename="time"):
     if filename == "none":
         return None
 
     if filename == "time":
-        filename = f"logs/ppo.{datetime.utcnow():%Y-%m-%dT%H%MZ}.log"
+        filename = f"logs/{prefix}_{datetime.utcnow():%Y-%m-%dT%H%MZ}.log"
     else:
         filename = f"logs/{filename}"
 

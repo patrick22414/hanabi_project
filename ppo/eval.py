@@ -1,79 +1,31 @@
 import argparse
-import itertools
 import json
 import logging
 import os
 import random
-from datetime import datetime
 from typing import List
 
 import torch
 
-from ppo.agent import MLPPolicy, PPOAgent, RNNPolicy
+from ppo.agent import PPOAgent, RNNPolicy
 from ppo.env import PPOEnv
 from ppo.utils import action_histogram, set_logfile
 
 LOG_EVAL = logging.getLogger("ppo.eval")
 
 
-def _evaluate_trajectories(env: PPOEnv, agent: PPOAgent, episodes=100):
-    assert isinstance(agent.policy, RNNPolicy)
-
-    total_steps = 0
-    total_reward = 0.0
-    total_entropy = 0.0
-    all_actions = []
-
-    for _ in range(episodes):
-        # RNN hidden states, one for each player
-        states = agent.policy.new_states(1, extra_dims=(env.players,))
-
-        env.reset()
-        is_terminal = False
-
-        while not is_terminal:
-            obs = torch.tensor(env.observation(env.cur_player), dtype=torch.float)
-            illegal_mask = torch.tensor(env.illegal_mask)
-
-            # action selection
-            action, action_logp, entropy, h_t = agent.policy(
-                obs.view(1, 1, -1), states[env.cur_player], illegal_mask.view(1, -1)
-            )
-
-            states[env.cur_player] = h_t
-
-            # env update
-            reward, is_terminal = env.step(action.item())
-
-            total_steps += 1
-            total_reward += reward
-            total_entropy += entropy.item()
-            all_actions.append(env.get_move(action.item()).type().name)
-
-    avg_length = total_steps / episodes
-    avg_reward = total_reward / episodes
-    avg_entropy = total_entropy / total_steps
-    action_hist = "\n" + action_histogram(all_actions)
-
-    LOG_EVAL.info(
-        "Evaluation done: "
-        f"avg_length={avg_length:.2f}, "
-        f"avg_reward={avg_reward:.2f}, "
-        f"avg_ent={avg_entropy:.2f}, "
-        f"action_histogram={action_hist}"
-    )
-
-
-def _evaluate_frames(
+@torch.no_grad()
+def evaluate(
     env: PPOEnv,
     agents: List[PPOAgent],
     episodes: int,
-    deterministic: bool,
+    deterministic=False,
     random_first_player=True,
     save_record_file=False,
 ):
     assert len(agents) == 1 or len(agents) == env.players
-    assert all(isinstance(a.policy, MLPPolicy) for a in agents)
+    if len(agents) == 1:
+        agents = agents * env.players
 
     records = {}
     total_length = 0
@@ -83,21 +35,34 @@ def _evaluate_frames(
     all_actions = []
 
     for i in range(episodes):
-        env.reset()
-        is_terminal = False
-
-        episode_record = {"reward": 0.0, "length": 0, "history": []}
-
         if random_first_player:
             random.shuffle(agents)
 
-        for agent in itertools.cycle(agents):
-            obs = torch.tensor(env.observation(env.cur_player), dtype=torch.float)
+        states = [
+            a.policy.new_states(1) if isinstance(a.policy, RNNPolicy) else None
+            for a in agents
+        ]
+
+        episode_record = {"reward": 0.0, "length": 0, "history": []}
+        env.reset()
+        is_terminal = False
+
+        while not is_terminal:
+            p = env.cur_player
+            obs = torch.tensor(env.observation(p), dtype=torch.float)
             illegal_mask = torch.tensor(env.illegal_mask)
 
             # action selection
-            action, _, entropy = [x.item() for x in agent.policy(obs, illegal_mask)]
+            if states[p] is not None:
+                action, _, entropy, h_t = agents[p].policy(
+                    obs.view(1, 1, -1), states[p], illegal_mask.view(1, -1)
+                )
+                states[p] = h_t
+            else:
+                action, _, entropy = agents[p].policy(obs, illegal_mask)
 
+            action = action.item()
+            entropy = entropy.item()
             reward, is_terminal = env.step(action)
 
             move = env.get_move(action)
@@ -106,9 +71,6 @@ def _evaluate_frames(
             episode_record["history"].append(f"{int(reward):+} {move}")
             total_entropy += entropy
             all_actions.append(move.type().name)
-
-            if is_terminal:
-                break
 
         records[f"episode {i + 1}"] = episode_record
         total_length += episode_record["length"]
@@ -133,23 +95,10 @@ def _evaluate_frames(
     LOG_EVAL.info(f"Action histogram:\n{action_hist}")
 
     if save_record_file:
-        filename = f"records/{datetime.utcnow().strftime('%Y-%m-%dT%H%M%SZ')}.json"
+        filename = f"records/{os.path.splitext(os.path.basename(LOG_EVAL.handlers[-1].baseFilename))[0]}.json"
         with open(filename, "w") as fo:
             json.dump(records, fo, indent=4)
         LOG_EVAL.info(f"Records saved to {filename}")
-
-
-@torch.no_grad()
-def evaluate(collection_type, env, agent, episodes=100, deterministic=True):
-    # TODO: unify evaluation
-    if collection_type == "frame":
-        _evaluate_frames(env, [agent], episodes, deterministic)
-
-    elif collection_type == "traj":
-        _evaluate_trajectories(env, agent, episodes)
-
-    else:
-        raise ValueError
 
 
 @torch.no_grad()
@@ -163,7 +112,7 @@ def main(env_config: dict, agents: List[str], episodes: int):
 
     os.makedirs("records", exist_ok=True)
 
-    _evaluate_frames(env, agents, episodes, save_record_file=True)
+    evaluate(env, agents, episodes, save_record_file=True)
 
 
 if __name__ == "__main__":
@@ -176,14 +125,19 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.logfile:
-        if args.logfile == "0":
-            set_logfile("none")
-
     # parse config file
     with open(args.config, "r") as fi:
         config = json.load(fi)
 
     env_config = config["env_config"]
+    prefix = f"{env_config['preset']}{env_config['players']}p"
+
+    if args.logfile:
+        if args.logfile == "0":
+            logfile = set_logfile(prefix, "none")
+        else:
+            logfile = set_logfile(prefix, args.logfile)
+    else:
+        logfile = set_logfile(prefix)
 
     main(env_config, args.agents, args.episodes)

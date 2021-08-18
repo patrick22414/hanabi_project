@@ -6,10 +6,8 @@ from matplotlib import pyplot as plt
 
 assert len(sys.argv) > 1
 
-pattern = re.compile(r"avg_reward=(\d*\.\d*),")
-pattern_iter = re.compile(r"Iteration (\d*)")
-
-plt.figure()
+pattern_1 = re.compile(r"Iteration (\d*)")
+pattern_2 = re.compile(r"avg_reward=(\d*\.\d*),")
 
 for filename in sys.argv[1:]:
     iteration = 0
@@ -18,11 +16,11 @@ for filename in sys.argv[1:]:
 
     with open(filename, "r") as logfile:
         for line in logfile:
-            match = pattern_iter.search(line)
+            match = pattern_1.search(line)
             if match:
                 iteration = int(match.group(1))
 
-            match = pattern.search(line)
+            match = pattern_2.search(line)
             if match:
                 iterations.append(iteration)
                 reward = float(match.group(1))
@@ -35,4 +33,5 @@ for filename in sys.argv[1:]:
 plt.ylim(0, 10)
 plt.legend()
 plt.grid()
+plt.tight_layout()
 plt.savefig("rewards.png")

@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+import os
 import random
 
 import torch
@@ -33,7 +34,7 @@ def main(
     parallel = collect_config["parallel"]
 
     if parallel > 1:
-        envs = [PPOEnv(**env_config, seed=seed + i) for i in range(parallel)]
+        envs = [PPOEnv(**env_config, seed=seed + i + 1) for i in range(parallel)]
 
     if agent_config["policy"]["type"] == "RNN":
         policy_cls = RNNPolicy
@@ -75,7 +76,7 @@ def main(
 
     LOG_MAIN.info("Initial evaluation")
     agent.eval()
-    evaluate(collection_type, env, agent, eval_config["episodes"])
+    evaluate(env, [agent], eval_config["episodes"])
 
     for i in range(1, iterations + 1):
         LOG_MAIN.info(f"====== Iteration {i}/{iterations} ======")
@@ -107,7 +108,7 @@ def main(
 
         if i % eval_config["eval_every"] == 0:
             agent.eval()
-            evaluate(collection_type, env, agent, eval_config["episodes"])
+            evaluate(env, [agent], eval_config["episodes"])
 
         if i % (iterations // checkpoints) == 0:
             checkpoint(
@@ -135,16 +136,18 @@ if __name__ == "__main__":
     with open(args.config, "r") as fi:
         config = json.load(fi)
 
+    prefix = os.path.splitext(os.path.basename(args.config))[0]
+
     if args.logfile:
         if args.logfile == "0":
-            set_logfile("none")
+            logfile = set_logfile(prefix, "none")
             LOG_MAIN.info("Not using logfile")
         else:
-            filename = set_logfile(args.logfile)
-            LOG_MAIN.info(f"Using logfile {filename}")
+            logfile = set_logfile(prefix, args.logfile)
+            LOG_MAIN.info(f"Using logfile {logfile}")
     else:
-        filename = set_logfile()
-        LOG_MAIN.info(f"Using default logfile {filename}")
+        logfile = set_logfile(prefix)
+        LOG_MAIN.info(f"Using default logfile {logfile}")
 
     if "seed" not in config or config["seed"] < 0:
         config["seed"] = random.randint(0, 999)

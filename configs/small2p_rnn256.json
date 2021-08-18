@@ -1,17 +1,19 @@
 {
   "seed": -1,
-  "iterations": 1000,
+  "iterations": 2000,
   "env_config": {
     "preset": "small",
     "players": 2,
-    "encoding_type": "card_knowledge",
-    "buffer_size": 1
+    "buffer_size": 1,
+    "obs_type": "card_knowledge",
+    "full_obs_type": "local",
+    "idle_reward": 0.0
   },
   "agent_config": {
     "policy": {
       "type": "RNN",
       "hidden_size": 256,
-      "num_layers": 1
+      "num_layers": 2
     },
     "value_fn": {
       "type": "MLP",
@@ -20,25 +22,25 @@
     }
   },
   "collect_config": {
-    "collection_type": "traj",
+    "collection_type": "frame",
     "collection_size": 10000,
-    "parallel": 1,
+    "parallel": 64,
     "gae_gamma": 0.99,
     "gae_lambda": 0.95
   },
   "train_config": {
-    "epochs": 5,
-    "batch_size": 256,
-    "policy_optimizer": {
-      "lr": 5e-4,
+    "epochs": 10,
+    "batch_size": 2048,
+    "optimizer": {
+      "lr": 8e-4,
       "weight_decay": 1e-6
     },
-    "value_fn_optimizer": {
-      "lr": 1e-3,
-      "weight_decay": 1e-6
+    "scheduler": {
+      "eta_min": 4e-4
     },
-    "ppo_clip": 0.2,
-    "entropy_coef": 0.01
+    "ppo_clip": [0.2, 0.1],
+    "entropy_coef": [0.01, 0.0],
+    "value_fn_coef": 2.0
   },
   "eval_config": {
     "eval_every": 1,
