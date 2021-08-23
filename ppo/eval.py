@@ -102,22 +102,28 @@ def evaluate(
 
 
 @torch.no_grad()
-def main(env_config: dict, agents: List[str], episodes: int):
+def main_selfplay(env_config: dict, agent_files: List[str], episodes: int):
     env = PPOEnv(**env_config)
 
-    state_dicts = [torch.load(f, map_location="cpu") for f in agents]
-    agents = [PPOAgent(state_dict) for state_dict in state_dicts]
-    for agent in agents:
-        agent.eval()
+    agents = [PPOAgent(torch.load(f, map_location="cpu")) for f in agent_files]
+    for a, f in zip(agents, agent_files):
+        LOG_EVAL.info(f"=== Self-play evaluation of {os.path.basename(f)} ===")
 
-    os.makedirs("records", exist_ok=True)
+        a.eval()
+        evaluate(env, [a], episodes)
 
-    evaluate(env, agents, episodes, save_record_file=True)
+    # os.makedirs("records", exist_ok=True)
+
+
+@torch.no_grad()
+def main_adhoc(env_config: dict, agents: List[str], episodes: int):
+    pass
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
+    parser.add_argument("game", type=str, choices=["selfplay", "adhoc"])
     parser.add_argument("-c", "--config", type=str, required=True)
     parser.add_argument("-a", "--agents", type=str, nargs="+", required=True)
     parser.add_argument("-l", "--logfile", type=str)
@@ -140,4 +146,7 @@ if __name__ == "__main__":
     else:
         logfile = set_logfile(prefix)
 
-    main(env_config, args.agents, args.episodes)
+    if args.game == "selfplay":
+        main_selfplay(env_config, args.agents, args.episodes)
+    else:  # args.game == "adhoc"
+        main_adhoc(env_config, args.agents, args.episodes)

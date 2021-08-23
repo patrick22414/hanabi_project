@@ -64,7 +64,9 @@ def main(
         ),
     )
 
-    LOG_MAIN.info(f"Observation size: {env.obs_size}. Num actions: {env.num_actions}")
+    LOG_MAIN.info(
+        f"Observation size: {env.obs_size}. Full observation size: {env.full_obs_size}. Num actions: {env.num_actions}"
+    )
 
     optimizer = torch.optim.Adam(agent.parameters(), **train_config["optimizer"])
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(

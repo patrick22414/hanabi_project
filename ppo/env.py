@@ -1,8 +1,27 @@
 from collections import deque
-from typing import Tuple
+from typing import List, Tuple
 
 import numpy as np
 from hanabi_learning_environment.pyhanabi import *
+
+
+def _hand_encoding_length(game: HanabiGame):
+    return game.hand_size() * game.num_colors() * game.num_ranks()
+
+
+def _encode_hand(hand: List[HanabiCard], game: HanabiGame):
+    hand_size = game.hand_size()
+    num_colors = game.num_colors()
+    num_ranks = game.num_ranks()
+    bits_per_card = num_colors * num_ranks
+
+    encoding = np.zeros((hand_size, bits_per_card), dtype=int)
+
+    for i, card in enumerate(hand):
+        index = card.color() * num_ranks + card.rank()
+        encoding[i, index] = 1
+
+    return encoding.flatten()
 
 
 class ActionIsIllegal(RuntimeError):
@@ -50,6 +69,8 @@ class PPOEnv:
                     "seed": seed,
                 }
             )
+        else:
+            raise ValueError
 
         self._encoder = ObservationEncoder(self._game)
 
@@ -61,12 +82,16 @@ class PPOEnv:
         self.buf_size = buffer_size
         self.enc_buffer: deque[np.ndarray] = deque(maxlen=buffer_size)
 
-        self.obs_size = self.buf_size * self.enc_size
+        self.obs_size = self.buf_size * self.enc_size + self.num_actions
         self.full_obs_type = full_obs_type
         if self.full_obs_type == "local":
             self.full_obs_size = self.enc_size
-        else:
+        elif self.full_obs_type == "global":
+            self.full_obs_size = _hand_encoding_length(self._game) + self.enc_size
+        elif self.full_obs_type == "concat":
             self.full_obs_size = self.players * self.enc_size
+        else:
+            raise ValueError
 
         self.idle_reward = idle_reward
 
@@ -104,16 +129,27 @@ class PPOEnv:
 
     def observation(self, player: int) -> np.ndarray:
         if self.buf_size == 1:
-            return self.enc_buffer[0][player]
+            obs = self.enc_buffer[0][player]
         else:
-            return np.concatenate([obs[player] for obs in self.enc_buffer])
+            obs = np.concatenate([obs[player] for obs in self.enc_buffer])
+
+        obs = np.concatenate([obs, np.logical_not(self.illegal_mask)])
+
+        return obs
 
     def full_observation(self) -> np.ndarray:
         if self.full_obs_type == "local":
             return self.enc_buffer[-1][self.cur_player]
-        elif self.full_obs_type == "cat":
-            return self.enc_buffer[-1].flatten()
-        elif self.full_obs_type == "roll":
+        elif self.full_obs_type == "global":
+            return np.concatenate(
+                [
+                    _encode_hand(
+                        self._state.player_hands()[self.cur_player], self._game
+                    ),
+                    self.enc_buffer[-1][self.cur_player],
+                ]
+            )
+        elif self.full_obs_type == "concat":
             return np.roll(self.enc_buffer[-1], -self.cur_player, axis=0).flatten()
         else:
             raise ValueError
