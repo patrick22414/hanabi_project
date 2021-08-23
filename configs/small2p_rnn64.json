@@ -1,6 +1,6 @@
 {
   "seed": -1,
-  "iterations": 2000,
+  "iterations": 5000,
   "env_config": {
     "preset": "small",
     "players": 2,
@@ -11,18 +11,18 @@
   },
   "agent_config": {
     "policy": {
-      "type": "MLP",
-      "hidden_size": 128,
+      "type": "RNN",
+      "hidden_size": 64,
       "num_layers": 2
     },
     "value_fn": {
       "type": "MLP",
-      "hidden_size": 128,
+      "hidden_size": 64,
       "num_layers": 2
     }
   },
   "collect_config": {
-    "collection_type": "frame",
+    "collection_type": "traj",
     "collection_size": 20000,
     "parallel": 64,
     "gae_gamma": 0.99,
@@ -30,7 +30,7 @@
   },
   "train_config": {
     "epochs": 10,
-    "batch_size": 2048,
+    "batch_size": 512,
     "optimizer": {
       "lr": 8e-4,
       "weight_decay": 1e-6

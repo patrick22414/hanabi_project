@@ -1,6 +1,6 @@
 {
   "seed": -1,
-  "iterations": 2000,
+  "iterations": 5000,
   "env_config": {
     "preset": "small",
     "players": 2,
@@ -12,12 +12,12 @@
   "agent_config": {
     "policy": {
       "type": "MLP",
-      "hidden_size": 128,
+      "hidden_size": 64,
       "num_layers": 2
     },
     "value_fn": {
       "type": "MLP",
-      "hidden_size": 128,
+      "hidden_size": 64,
       "num_layers": 2
     }
   },

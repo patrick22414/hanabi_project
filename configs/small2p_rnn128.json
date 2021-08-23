@@ -22,15 +22,15 @@
     }
   },
   "collect_config": {
-    "collection_type": "frame",
-    "collection_size": 10000,
+    "collection_type": "traj",
+    "collection_size": 20000,
     "parallel": 64,
     "gae_gamma": 0.99,
     "gae_lambda": 0.95
   },
   "train_config": {
     "epochs": 10,
-    "batch_size": 2048,
+    "batch_size": 512,
     "optimizer": {
       "lr": 8e-4,
       "weight_decay": 1e-6

@@ -3,7 +3,7 @@
   "iterations": 2000,
   "env_config": {
     "preset": "small",
-    "players": 2,
+    "players": 5,
     "buffer_size": 1,
     "obs_type": "card_knowledge",
     "full_obs_type": "local",
@@ -32,14 +32,14 @@
     "epochs": 10,
     "batch_size": 2048,
     "optimizer": {
-      "lr": 8e-4,
+      "lr": 1e-3,
       "weight_decay": 1e-6
     },
     "scheduler": {
-      "eta_min": 4e-4
+      "eta_min": 5e-4
     },
     "ppo_clip": [0.2, 0.1],
-    "entropy_coef": [0.01, 0.0],
+    "entropy_coef": [0.01, -0.01],
     "value_fn_coef": 2.0
   },
   "eval_config": {
