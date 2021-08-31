@@ -82,7 +82,7 @@ class PPOEnv:
         self.buf_size = buffer_size
         self.enc_buffer: deque[np.ndarray] = deque(maxlen=buffer_size)
 
-        self.obs_size = self.buf_size * self.enc_size + self.num_actions
+        self.obs_size = self.buf_size * self.enc_size
         self.full_obs_type = full_obs_type
         if self.full_obs_type == "local":
             self.full_obs_size = self.enc_size
@@ -133,7 +133,7 @@ class PPOEnv:
         else:
             obs = np.concatenate([obs[player] for obs in self.enc_buffer])
 
-        obs = np.concatenate([obs, np.logical_not(self.illegal_mask)])
+        # obs = np.concatenate([obs, np.logical_not(self.illegal_mask)])
 
         return obs
 

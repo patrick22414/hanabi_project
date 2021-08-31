@@ -48,6 +48,18 @@ def set_logfile(prefix, filename="time"):
     return filename
 
 
+def score_histogram(scores: List[str]):
+    values, counts = np.unique(scores, return_counts=True)
+
+    line_1, line_2 = " " * 4, " " * 4
+
+    for v, c in zip(map(str, values), map(str, counts)):
+        line_1 += v.rjust(4, " ")
+        line_2 += c.rjust(4, " ")
+
+    return line_1 + "\n" + line_2
+
+
 def action_histogram(actions: List[str]):
     values, counts = np.unique(actions, return_counts=True)
 

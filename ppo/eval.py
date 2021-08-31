@@ -4,12 +4,13 @@ import logging
 import os
 import random
 from typing import List
+import numpy as np
 
 import torch
 
 from ppo.agent import PPOAgent, RNNPolicy
 from ppo.env import PPOEnv
-from ppo.utils import action_histogram, set_logfile
+from ppo.utils import action_histogram, score_histogram, set_logfile
 
 LOG_EVAL = logging.getLogger("ppo.eval")
 
@@ -27,12 +28,10 @@ def evaluate(
     if len(agents) == 1:
         agents = agents * env.players
 
-    records = {}
-    total_length = 0
-    total_reward = 0.0
+    all_records = {}
+    all_actions = []
     perfect_games = 0
     total_entropy = 0.0
-    all_actions = []
 
     for i in range(episodes):
         if random_first_player:
@@ -72,16 +71,22 @@ def evaluate(
             total_entropy += entropy
             all_actions.append(move.type().name)
 
-        records[f"episode {i + 1}"] = episode_record
-        total_length += episode_record["length"]
-        total_reward += episode_record["reward"]
+        all_records[f"episode {i + 1}"] = episode_record
+        # total_length += episode_record["length"]
+        # total_reward += episode_record["reward"]
         if episode_record["reward"] == env.max_score:
             perfect_games += 1
 
-    avg_length = total_length / episodes
-    avg_reward = total_reward / episodes
+    all_lengths = np.array([rec["length"] for rec in all_records.values()])
+    all_rewards = np.array([rec["reward"] for rec in all_records.values()])
+
+    avg_length = np.mean(all_lengths)
+    avg_reward = np.mean(all_rewards)
+    std_reward = np.std(all_rewards)
     perfect_games = perfect_games / episodes
-    avg_entropy = total_entropy / total_length
+    avg_entropy = total_entropy / np.sum(all_lengths)
+
+    score_hist = score_histogram(all_rewards.astype(int))
     action_hist = action_histogram(all_actions)
 
     LOG_EVAL.info(f"Evaluation done for {episodes} episodes")
@@ -89,15 +94,17 @@ def evaluate(
         "Performace: "
         f"avg_length={avg_length:.2f}, "
         f"avg_reward={avg_reward:.2f}, "
-        f"perfect={perfect_games:.2%}, "
+        f"std_reward={std_reward:.2f}, "
+        # f"perfect={perfect_games:.2%}, "
         f"avg_entropy={avg_entropy:.2f}"
     )
+    LOG_EVAL.info(f"Score histogram:\n{score_hist}")
     LOG_EVAL.info(f"Action histogram:\n{action_hist}")
 
     if save_record_file:
         filename = f"records/{os.path.splitext(os.path.basename(LOG_EVAL.handlers[-1].baseFilename))[0]}.json"
         with open(filename, "w") as fo:
-            json.dump(records, fo, indent=4)
+            json.dump(all_records, fo, indent=4)
         LOG_EVAL.info(f"Records saved to {filename}")
 
 
