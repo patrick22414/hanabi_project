@@ -1,11 +1,12 @@
 import argparse
+import itertools
 import json
 import logging
 import os
 import random
 from typing import List
-import numpy as np
 
+import numpy as np
 import torch
 
 from ppo.agent import PPOAgent, RNNPolicy
@@ -123,8 +124,16 @@ def main_selfplay(env_config: dict, agent_files: List[str], episodes: int):
 
 
 @torch.no_grad()
-def main_adhoc(env_config: dict, agents: List[str], episodes: int):
-    pass
+def main_adhoc(env_config: dict, agent_files: List[str], episodes: int):
+    env = PPOEnv(**env_config)
+
+    agents = [(f, PPOAgent(torch.load(f, map_location="cpu"))) for f in agent_files]
+    for agent_pair in itertools.product(agents, repeat=2):
+        LOG_EVAL.info(
+            f"=== Ad hoc evaluation of {os.path.basename(agent_pair[0][0])} and {os.path.basename(agent_pair[1][0])} ==="
+        )
+
+        evaluate(env, [a[1].eval() for a in agent_pair], episodes)
 
 
 if __name__ == "__main__":

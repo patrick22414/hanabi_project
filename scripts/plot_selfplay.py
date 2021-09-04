@@ -18,18 +18,10 @@ assert len(sys.argv) > 1
 pattern_1 = re.compile(r"=== Self-play evaluation of (\S*) ===")
 pattern_2 = re.compile(r"avg_reward=(\d*\.\d*), std_reward=(\d*\.\d*),")
 
-labels = None
-labels = [
-    "MLP128",
-    "MLP256",
-    "RNN128",
-    "RNN256",
-]
-
-fig = plt.figure(figsize=(9, 6))
+fig = plt.figure(figsize=(8, 4))
 ax = plt.gca()
 
-names = []
+labels = []
 avgs = []
 stds = []
 
@@ -39,7 +31,7 @@ with open(sys.argv[1], "r") as logfile:
         if match:
             print(match.groups())
             checkpoint_name = match.group(1)
-            names.append(checkpoint_name)
+            labels.append(checkpoint_name)
 
         match = pattern_2.search(line)
         if match:
@@ -47,6 +39,15 @@ with open(sys.argv[1], "r") as logfile:
             avgs.append(float(match.group(1)))
             stds.append(float(match.group(2)))
 
+
+labels = [
+    # "MLP64",
+    "MLP128",
+    # "MLP256",
+    # "RNN64",
+    "RNN128",
+    # "RNN256",
+]
 
 bars = ax.barh(
     np.arange(len(labels)),
@@ -65,7 +66,7 @@ ax.bar_label(
     padding=8,
 )
 
-ax.set_ylim(-0.75, 3.75)
+ax.set_ylim(-0.75, 1.75)
 ax.set_yticks(np.arange(len(labels)))
 ax.set_yticklabels(labels)
 ax.invert_yaxis()
