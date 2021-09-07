@@ -10,6 +10,13 @@ The implementation is based on [Proximal Policy Optimisation](https://arxiv.org/
 - PyTorch (currently CPU only) (someone buy me a NVIDIA laptop plz?)
 - [Hanabi Learning Environment](https://github.com/deepmind/hanabi-learning-environment)
 
+## Repo Structure
+
+- `configs/`: JSON configuration files for agent training. Some are outdated, use for reference only.
+- `figures/`: figures for this README.
+- `ppo/`: main source files.
+- `scripts/`: plotting scripts. Very volatile, use at own risk (I detest matplotlib).
+
 ## Performance
 
 ### Hanabi-Small
