@@ -90,7 +90,7 @@ def evaluate(
     score_hist = score_histogram(all_rewards.astype(int))
     action_hist = action_histogram(all_actions)
 
-    LOG_EVAL.info(f"Evaluation done for {episodes} episodes")
+    LOG_EVAL.info(f"------ Evaluation over {episodes} episodes ------")
     LOG_EVAL.info(
         "Performace: "
         f"avg_length={avg_length:.2f}, "

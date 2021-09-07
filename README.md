@@ -1,29 +1,29 @@
-# hanabi_project
+# Multi-Agent Cooperation in Hanabi with Policy Optimisation
 
-## PPO
+This is the source code for my master's dissertation project _Multi-Agent Cooperation in Hanabi with Policy Optimisation_.
 
-Now there is a PPO (with GAE) implementation as well!
+The implementation is based on [Proximal Policy Optimisation](https://arxiv.org/abs/1707.06347) and [Hanabi Learning Environment](https://github.com/deepmind/hanabi-learning-environment).
 
-And it's finally (kind of) working!
+## Requirement
 
-We now have a score of ~4/25 at 1M steps. Not good, but it's a start.
+- Python 3.7+ (because I can't survive without f-strings)
+- PyTorch (currently CPU only) (someone buy me a NVIDIA laptop plz?)
+- [Hanabi Learning Environment](https://github.com/deepmind/hanabi-learning-environment)
 
-## DQN
+## Performance
 
-There is a (Dueling & Double) DQN implementation for the Hanabi game.
+### Hanabi-Small
 
-But either DQN is too hard to train or it doesn't work at all.
+Hanabi-Small is a smaller version of Hanabi with a maximum score of 10. Currently we can train an agent on Hanabi-Small in under 8 hours on an 8-core CPU machine.
 
-## To-do
+<object data="figures/mlp_training.pdf" type="application/pdf" width="700px" height="700px">
+    <embed src="figures/mlp_training.pdf">
+        <p>This browser does not support PDFs. Please download the PDF to view it: <a href="figures/mlp_training.pdf">Download PDF</a>.</p>
+    </embed>
+</object>
 
-### PPO
-
-- checkpointing
-- actor multiprocessing (failed)
-- RNN
-- ad hoc agents
-
-### DQN
-
-- priotized replay
-- refactoring
+<object data="figures/rnn_training.pdf" type="application/pdf" width="700px" height="700px">
+    <embed src="figures/rnn_training.pdf">
+        <p>This browser does not support PDFs. Please download the PDF to view it: <a href="figures/rnn_training.pdf">Download PDF</a>.</p>
+    </embed>
+</object>

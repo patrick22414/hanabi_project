@@ -1,11 +1,10 @@
 .DS_Store
 .vscode/
 
+.archive/
 _archive/
 checkpoints*/
 tmp*
-*.png
-*.pdf
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
