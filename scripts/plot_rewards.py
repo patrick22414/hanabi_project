@@ -6,8 +6,8 @@ import numpy as np
 import matplotlib
 
 font = {
-    "family": "Helvetica",
-    "size": 20,
+    "family": "Avenir Next",
+    "size": 12,
 }
 
 matplotlib.rc("font", **font)
@@ -21,14 +21,17 @@ pattern_2 = re.compile(r"avg_reward=(\d*\.\d*),")
 
 labels = None
 labels = [
-    "MLP128 + MINIMAL obs.",
-    "RNN128 + MINIMAL obs.",
-    # "MLP128 #3",
-    # "MLP128 #4",
-    # "MLP128 #5",
+    # "MLP64",
+    # "MLP128",
+    # "MLP256",
+    "RNN64",
+    "RNN128",
+    "RNN256",
 ]
 
 plt.figure(figsize=(8, 6))
+ax = plt.gca()
+ax.set_box_aspect(1)
 
 for i, filename in enumerate(sys.argv[1:]):
     iteration = 0
@@ -54,12 +57,14 @@ for i, filename in enumerate(sys.argv[1:]):
     else:
         plt.plot(iterations, rewards, linewidth=2, label=filename)
 
-plt.xlabel("Iterations")
-plt.xlim(0, 2000)
+ax.set_xlabel("Iterations")
+ax.set_xlim(0, 2000)
 
-plt.ylabel("Score (11-point average)")
-plt.ylim(0, 10)
+ax.set_ylabel("Score (11-point average)")
+ax.set_ylim(0, 10)
+ax.set_yticks(np.arange(0, 11))
 
+plt.title("Hanabi-Small Performance (RNN)")
 plt.legend(loc="lower right")
 plt.grid()
 plt.tight_layout()

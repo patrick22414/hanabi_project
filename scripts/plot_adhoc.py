@@ -1,8 +1,8 @@
 import matplotlib
 
 font = {
-    "family": "Helvetica",
-    "size": 16,
+    "family": "Avenir Next",
+    "size": 12,
 }
 
 matplotlib.rc("font", **font)
@@ -191,22 +191,23 @@ stdevs = np.array(
 #     ]
 # )
 
-fig = plt.figure(figsize=(12, 8))
+fig = plt.figure(figsize=(8, 6))
 ax = plt.gca()
 
 im, cbar = heatmap(scores, agents, agents, ax=ax, vmin=0, vmax=10)
 text = annotate_heatmap(im, scores)
 
+plt.title("Ad hoc performance")
 plt.tight_layout()
 plt.savefig("adhoc_scores.png")
 plt.savefig("adhoc_scores.pdf")
 
-fig = plt.figure(figsize=(12, 8))
-ax = plt.gca()
+# fig = plt.figure(figsize=(9, 6))
+# ax = plt.gca()
 
-im, cbar = heatmap(stdevs, agents, agents, ax=ax, vmin=0, vmax=10)
-text = annotate_heatmap(im, stdevs)
+# im, cbar = heatmap(stdevs, agents, agents, ax=ax, vmin=0, vmax=10)
+# text = annotate_heatmap(im, stdevs)
 
-plt.tight_layout()
-plt.savefig("adhoc_stdevs.png")
-plt.savefig("adhoc_stdevs.pdf")
+# plt.tight_layout()
+# plt.savefig("adhoc_stdevs.png")
+# plt.savefig("adhoc_stdevs.pdf")
